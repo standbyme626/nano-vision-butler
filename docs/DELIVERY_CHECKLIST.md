@@ -17,6 +17,7 @@
 - [x] `tests/`
 - [x] `scripts/init_db.sh`
 - [x] `scripts/start_backend.sh`
+- [x] `scripts/start_mcp.sh`
 - [x] `scripts/start_gateway.sh`
 - [x] `scripts/start_edge.sh`
 - [x] `scripts/smoke_test.sh`
@@ -36,6 +37,7 @@
 ## 4) 建议首次启动顺序
 1. `./scripts/init_db.sh`
 2. `./scripts/start_backend.sh`
-3. `NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
-4. `EDGE_ACTION=heartbeat ./scripts/start_edge.sh`
-5. `./scripts/smoke_test.sh`
+3. `./scripts/start_mcp.sh`
+4. `NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
+5. `EDGE_ACTION=heartbeat ./scripts/start_edge.sh`
+6. `./scripts/smoke_test.sh`

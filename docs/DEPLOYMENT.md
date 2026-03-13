@@ -59,6 +59,20 @@
 - `./scripts/start_backend.sh`
 - `BACKEND_PORT=8100 BACKEND_RELOAD=1 ./scripts/start_backend.sh`
 
+## 启动 MCP Server（streamable-http）
+使用脚本：`scripts/start_mcp.sh`。
+
+关键环境变量：
+- `MCP_HOST`：监听地址（默认 `0.0.0.0`）。
+- `MCP_PORT`：监听端口（默认 `8001`）。
+- `MCP_PATH`：MCP HTTP 路径（默认 `/mcp`）。
+- `MCP_CONFIG_DIR`：配置目录（默认 `./config`，读取 `settings/policies/access/devices/cameras/aliases`）。
+- `PYTHON_BIN`：Python 命令（默认 `python3`）。
+
+示例：
+- `./scripts/start_mcp.sh`
+- `MCP_HOST=0.0.0.0 MCP_PORT=8001 MCP_PATH=/mcp ./scripts/start_mcp.sh`
+
 ## 启动 Edge（RK3566 runtime）
 使用脚本：`scripts/start_edge.sh`。
 
@@ -77,9 +91,10 @@
 ## 首次启动顺序（最小交付路径）
 1. `./scripts/init_db.sh`
 2. `./scripts/start_backend.sh`
-3. `NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
-4. `EDGE_ACTION=heartbeat ./scripts/start_edge.sh`
-5. `./scripts/smoke_test.sh`
+3. `./scripts/start_mcp.sh`
+4. `NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
+5. `EDGE_ACTION=heartbeat ./scripts/start_edge.sh`
+6. `./scripts/smoke_test.sh`
 
 ## 正式实例与开发实例隔离建议
 - Telegram Token/allowFrom：使用不同机器人和用户白名单，禁止共享。
@@ -97,7 +112,7 @@
 ## 当前可运行范围与适配器边界
 当前可运行范围：
 - FastAPI + SQLite + MCP + Telegram update 主链路可本地启动与验证。
-- `scripts/init_db.sh`、`scripts/start_backend.sh`、`scripts/start_gateway.sh`、`scripts/start_edge.sh`、`scripts/smoke_test.sh` 均可执行。
+- `scripts/init_db.sh`、`scripts/start_backend.sh`、`scripts/start_mcp.sh`、`scripts/start_gateway.sh`、`scripts/start_edge.sh`、`scripts/smoke_test.sh` 均可执行。
 
 当前仍为适配器范围：
 - 真实 Telegram token 与公网 webhook/long-polling 运维配置。

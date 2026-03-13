@@ -32,9 +32,10 @@
 ## 本地最小启动
 1. 初始化数据库：`./scripts/init_db.sh`
 2. 启动后端：`./scripts/start_backend.sh`
-3. 预检查网关命令：`NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
-4. 启动边缘运行一次：`EDGE_ACTION=run-once ./scripts/start_edge.sh`
-5. 执行 smoke：`./scripts/smoke_test.sh`
+3. 启动 MCP HTTP 服务：`./scripts/start_mcp.sh`
+4. 预检查网关命令：`NANOBOT_DRY_RUN=1 NANOBOT_INSTANCE=dev ./scripts/start_gateway.sh`
+5. 启动边缘运行一次：`EDGE_ACTION=run-once ./scripts/start_edge.sh`
+6. 执行 smoke：`./scripts/smoke_test.sh`
 
 ## 当前可运行范围
 - FastAPI sidecar、SQLite、MCP Server、Telegram update 处理链路、edge runtime CLI 均可本地运行。

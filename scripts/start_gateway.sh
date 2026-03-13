@@ -104,6 +104,10 @@ if auto_disable:
                 + ", ".join(unreachable),
                 file=sys.stderr,
             )
+            print(
+                "[HINT] Start MCP first: ./scripts/start_mcp.sh (or set NANOBOT_AUTO_DISABLE_MCP=0 to fail fast).",
+                file=sys.stderr,
+            )
 
 print(str(effective_path))
 PY
