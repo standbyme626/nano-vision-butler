@@ -43,6 +43,12 @@
 - 查看日志：`./scripts/stack_ctl.sh logs gateway`
 - 停止全部：`./scripts/stack_ctl.sh stop`
 
+## Ollama 上下文档位
+- 默认模型：`qwen3.5:4b-32k`（远端 Ollama）
+- 切到 64k：`./scripts/switch_ollama_ctx.sh 64k --restart`
+- 切回 32k：`./scripts/switch_ollama_ctx.sh 32k --restart`
+- 查看当前档位：`./scripts/switch_ollama_ctx.sh status`
+
 ## 当前可运行范围
 - FastAPI sidecar、SQLite、MCP Server、Telegram update 处理链路、edge runtime CLI 均可本地运行。
 - 单测/集成/E2E 测试与 smoke 脚本可直接执行。

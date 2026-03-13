@@ -102,6 +102,18 @@
 - PID 目录：`gateway/runtime/stack/pids`
 - 日志目录：`gateway/runtime/stack/logs`
 
+## Ollama 32k/64k 档位切换
+使用脚本：`scripts/switch_ollama_ctx.sh`。
+
+常用命令：
+- 查看当前档位：`./scripts/switch_ollama_ctx.sh status`
+- 切到 32k（默认）：`./scripts/switch_ollama_ctx.sh 32k --restart`
+- 切到 64k（长上下文场景）：`./scripts/switch_ollama_ctx.sh 64k --restart`
+
+说明：
+- 当前实现是“默认 32k + 按需切到 64k”。
+- nanobot 目前未提供按上下文长度自动切换模型的原生开关。
+
 ## 首次启动顺序（最小交付路径）
 1. `./scripts/init_db.sh`
 2. `./scripts/start_backend.sh`
@@ -127,6 +139,7 @@
 当前可运行范围：
 - FastAPI + SQLite + MCP + Telegram update 主链路可本地启动与验证。
 - `scripts/init_db.sh`、`scripts/start_backend.sh`、`scripts/start_mcp.sh`、`scripts/start_gateway.sh`、`scripts/stack_ctl.sh`、`scripts/start_edge.sh`、`scripts/smoke_test.sh` 均可执行。
+- `scripts/switch_ollama_ctx.sh` 可切换远端 Ollama 上下文档位。
 
 当前仍为适配器范围：
 - 真实 Telegram token 与公网 webhook/long-polling 运维配置。
