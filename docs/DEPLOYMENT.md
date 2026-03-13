@@ -88,6 +88,20 @@
 - `EDGE_ACTION=heartbeat ./scripts/start_edge.sh`
 - `EDGE_ACTION=run-once EDGE_LOOP=1 EDGE_INTERVAL_SEC=10 ./scripts/start_edge.sh`
 
+## 一键后台常驻（推荐）
+使用脚本：`scripts/stack_ctl.sh`，统一管理 backend / mcp / gateway 三个进程。
+
+常用命令：
+- 启动：`NANOBOT_INSTANCE=prod NANOBOT_AUTO_DISABLE_MCP=0 ./scripts/stack_ctl.sh start`
+- 状态：`./scripts/stack_ctl.sh status`
+- 日志：`./scripts/stack_ctl.sh logs gateway`
+- 重启：`./scripts/stack_ctl.sh restart`
+- 停止：`./scripts/stack_ctl.sh stop`
+
+运行产物：
+- PID 目录：`gateway/runtime/stack/pids`
+- 日志目录：`gateway/runtime/stack/logs`
+
 ## 首次启动顺序（最小交付路径）
 1. `./scripts/init_db.sh`
 2. `./scripts/start_backend.sh`
@@ -112,7 +126,7 @@
 ## 当前可运行范围与适配器边界
 当前可运行范围：
 - FastAPI + SQLite + MCP + Telegram update 主链路可本地启动与验证。
-- `scripts/init_db.sh`、`scripts/start_backend.sh`、`scripts/start_mcp.sh`、`scripts/start_gateway.sh`、`scripts/start_edge.sh`、`scripts/smoke_test.sh` 均可执行。
+- `scripts/init_db.sh`、`scripts/start_backend.sh`、`scripts/start_mcp.sh`、`scripts/start_gateway.sh`、`scripts/stack_ctl.sh`、`scripts/start_edge.sh`、`scripts/smoke_test.sh` 均可执行。
 
 当前仍为适配器范围：
 - 真实 Telegram token 与公网 webhook/long-polling 运维配置。

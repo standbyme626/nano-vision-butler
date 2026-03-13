@@ -19,6 +19,7 @@
 - [x] `scripts/start_backend.sh`
 - [x] `scripts/start_mcp.sh`
 - [x] `scripts/start_gateway.sh`
+- [x] `scripts/stack_ctl.sh`
 - [x] `scripts/start_edge.sh`
 - [x] `scripts/smoke_test.sh`
 

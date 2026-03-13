@@ -37,6 +37,12 @@
 5. 启动边缘运行一次：`EDGE_ACTION=run-once ./scripts/start_edge.sh`
 6. 执行 smoke：`./scripts/smoke_test.sh`
 
+## 后台常驻启动
+- 一键后台启动：`NANOBOT_INSTANCE=prod NANOBOT_AUTO_DISABLE_MCP=0 ./scripts/stack_ctl.sh start`
+- 查看状态：`./scripts/stack_ctl.sh status`
+- 查看日志：`./scripts/stack_ctl.sh logs gateway`
+- 停止全部：`./scripts/stack_ctl.sh stop`
+
 ## 当前可运行范围
 - FastAPI sidecar、SQLite、MCP Server、Telegram update 处理链路、edge runtime CLI 均可本地运行。
 - 单测/集成/E2E 测试与 smoke 脚本可直接执行。
