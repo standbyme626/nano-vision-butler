@@ -30,11 +30,15 @@ class EventCompressor:
         clip_uri: str | None = None,
         model_version: str | None = None,
         trace_id: str | None = None,
+        detector_error: str | None = None,
     ) -> dict[str, object]:
         primary = max(detections, key=lambda item: item.confidence) if detections else None
         emitted_at = utc_now_iso8601()
         event_id = f"evt-{uuid4().hex[:12]}"
         serialized_objects = [self._serialize_detection(item) for item in detections]
+        compress_reason = "event_compressor_v1"
+        if detector_error:
+            compress_reason = f"{compress_reason}|detector_degraded"
         payload = {
             "schema_version": EVENT_SCHEMA_VERSION,
             "event_id": event_id,
@@ -49,7 +53,7 @@ class EventCompressor:
             "snapshot_uri": snapshot_uri,
             "clip_uri": clip_uri,
             "model_version": model_version,
-            "compress_reason": "event_compressor_v1",
+            "compress_reason": compress_reason,
             "signature": None,
             # Backward-compatible fields consumed by current backend code.
             "observed_at": frame.captured_at,

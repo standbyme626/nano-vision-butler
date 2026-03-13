@@ -3,7 +3,8 @@
 ## 模块职责划分
 - `edge_device/capture/camera.py`：相机采集接口、工厂与 `StubCamera` 回退策略。
 - `edge_device/capture/v4l2_camera.py`：V4L2/GStreamer/FFmpeg 真实采集实现（带重试与错误可观测）。
-- `edge_device/inference/detector.py`：轻量检测接口 `LightweightDetector`，后续接入 RKNN。
+- `edge_device/inference/detector.py`：检测工厂与统一接口。
+- `edge_device/inference/rknn_detector.py`：RKNN 主检测器（失败自动降级到 LightweightDetector）。
 - `edge_device/tracking/tracker.py`：`track_id` 分配与轻量跟踪占位。
 - `edge_device/compression/event_compressor.py`：把检测结果压缩为统一 event envelope，并输出后端可消费 payload。
 - `edge_device/cache/ring_buffer.py`：快照和短视频片段 ring buffer。
@@ -29,6 +30,9 @@ python3 -m edge_device.api.server get-recent-clip --duration-sec 6
 - `EDGE_CAPTURE_PIXEL_FORMAT`：像素格式（例如 `MJPG` / `YUYV` / `NV12`）
 - `EDGE_CAPTURE_BACKEND`：`auto | v4l2 | gstreamer | ffmpeg | stub`
 - `EDGE_CAPTURE_RETRY_COUNT` / `EDGE_CAPTURE_RETRY_DELAY_SEC`：失败重试参数
+- `EDGE_DETECTOR_BACKEND`：`auto | rknn | lightweight`
+- `EDGE_RKNN_MODEL_PATH` / `EDGE_RKNN_MODEL_VERSION`：RKNN 模型路径与版本
+- `EDGE_RKNN_INPUT_SIZE` / `EDGE_RKNN_LABELS`：输入尺寸与标签配置
 - `EDGE_SNAPSHOT_DIR` / `EDGE_CLIP_DIR`：本地缓存目录
 
 ## Event Envelope 示例
@@ -91,6 +95,6 @@ python3 -m edge_device.api.server get-recent-clip --duration-sec 6
 
 ## 后续替换点（真实硬件接入）
 - 采集层已支持 `V4L2/GStreamer/FFmpeg`；通过 `EDGE_CAPTURE_*` 参数切换与调优。
-- `LightweightDetector.detect`：替换为 RKNN 推理调用。
+- 检测默认通过 `create_detector_from_env()` 选择 backend；`rknn` 不可用时自动降级并输出 `detector_error`。
 - `LightweightTracker.assign_tracks`：替换为真实多目标跟踪器（如 ByteTrack 简化版）。
 - `_store_snapshot` 已支持真实 JPEG 编码；`_assemble_clip` 仍为占位实现，待 T13H 真实化。

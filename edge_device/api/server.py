@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,10 +17,11 @@ from edge_device.cache.ring_buffer import ClipItem, MediaRingBuffer, SnapshotIte
 from edge_device.capture.camera import CameraProtocol, CapturedFrame, create_camera, utc_now_iso8601
 from edge_device.compression.event_compressor import EventCompressor
 from edge_device.health.heartbeat import HeartbeatBuilder
-from edge_device.inference.detector import LightweightDetector
+from edge_device.inference.detector import DetectorProtocol, create_detector_from_env
 from edge_device.tracking.tracker import LightweightTracker
 
 COMMAND_RESPONSE_SCHEMA_VERSION = "edge.command_response.v1"
+LOGGER = logging.getLogger(__name__)
 
 
 class BackendClientProtocol(Protocol):
@@ -58,7 +60,7 @@ class EdgeDeviceRuntime:
         config: EdgeDeviceConfig,
         backend_client: BackendClientProtocol | None = None,
         camera: CameraProtocol | None = None,
-        detector: LightweightDetector | None = None,
+        detector: DetectorProtocol | None = None,
         tracker: LightweightTracker | None = None,
         compressor: EventCompressor | None = None,
         cache: MediaRingBuffer | None = None,
@@ -76,7 +78,7 @@ class EdgeDeviceRuntime:
             retry_count=config.capture_retry_count,
             retry_delay_sec=config.capture_retry_delay_sec,
         )
-        self.detector = detector or LightweightDetector()
+        self.detector = detector or create_detector_from_env()
         self.tracker = tracker or LightweightTracker()
         self.compressor = compressor or EventCompressor()
         self.cache = cache or MediaRingBuffer(
@@ -89,6 +91,9 @@ class EdgeDeviceRuntime:
     def run_once(self, *, trace_id: str | None = None) -> dict[str, Any]:
         frame = self.camera.capture_latest_frame()
         detections = self.tracker.assign_tracks(self.detector.detect(frame))
+        detector_error = self._as_optional_text(getattr(self.detector, "last_error", None))
+        if detector_error:
+            LOGGER.warning("Detector degraded for %s/%s: %s", self.config.device_id, self.config.camera_id, detector_error)
         snapshot = self._store_snapshot(frame)
         self.cache.add_snapshot(snapshot)
 
@@ -101,6 +106,7 @@ class EdgeDeviceRuntime:
             snapshot_uri=snapshot.uri,
             model_version=self.detector.model_version,
             trace_id=trace_id,
+            detector_error=detector_error,
         )
         backend_response = self.backend_client.post_event(envelope["payload"])
         return {
@@ -109,6 +115,8 @@ class EdgeDeviceRuntime:
             "data": {
                 "frame_id": frame.frame_id,
                 "detections": len(detections),
+                "model_version": self.detector.model_version,
+                "detector_error": detector_error,
                 "snapshot_uri": snapshot.uri,
                 "event_envelope": envelope,
                 "backend_response": backend_response,
@@ -155,6 +163,13 @@ class EdgeDeviceRuntime:
                 "received_at": utc_now_iso8601(),
             },
         }
+
+    @staticmethod
+    def _as_optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
     def get_recent_clip(
         self,

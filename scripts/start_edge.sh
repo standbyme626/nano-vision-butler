@@ -16,6 +16,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${EDGE_CAPTURE_BACKEND:=auto}"
 : "${EDGE_CAPTURE_RETRY_COUNT:=3}"
 : "${EDGE_CAPTURE_RETRY_DELAY_SEC:=1.0}"
+: "${EDGE_DETECTOR_BACKEND:=auto}"
+: "${EDGE_DETECT_MIN_CONFIDENCE:=0.35}"
+: "${EDGE_DETECT_MODEL_VERSION:=stub-detector-v1}"
+: "${EDGE_RKNN_MODEL_PATH:=}"
+: "${EDGE_RKNN_MODEL_VERSION:=}"
+: "${EDGE_RKNN_INPUT_SIZE:=640x640}"
+: "${EDGE_RKNN_LABELS:=person,package,car}"
 : "${EDGE_SNAPSHOT_DIR:=${ROOT_DIR}/data/edge_device/snapshots}"
 : "${EDGE_CLIP_DIR:=${ROOT_DIR}/data/edge_device/clips}"
 : "${EDGE_SNAPSHOT_BUFFER_SIZE:=32}"
@@ -40,6 +47,13 @@ export EDGE_CAPTURE_PIXEL_FORMAT
 export EDGE_CAPTURE_BACKEND
 export EDGE_CAPTURE_RETRY_COUNT
 export EDGE_CAPTURE_RETRY_DELAY_SEC
+export EDGE_DETECTOR_BACKEND
+export EDGE_DETECT_MIN_CONFIDENCE
+export EDGE_DETECT_MODEL_VERSION
+export EDGE_RKNN_MODEL_PATH
+export EDGE_RKNN_MODEL_VERSION
+export EDGE_RKNN_INPUT_SIZE
+export EDGE_RKNN_LABELS
 export EDGE_SNAPSHOT_DIR
 export EDGE_CLIP_DIR
 export EDGE_SNAPSHOT_BUFFER_SIZE
@@ -57,6 +71,12 @@ echo "[INFO] Capture fps        : ${EDGE_CAPTURE_FPS}"
 echo "[INFO] Capture pixel fmt  : ${EDGE_CAPTURE_PIXEL_FORMAT}"
 echo "[INFO] Capture backend    : ${EDGE_CAPTURE_BACKEND}"
 echo "[INFO] Capture retries    : ${EDGE_CAPTURE_RETRY_COUNT} (delay=${EDGE_CAPTURE_RETRY_DELAY_SEC}s)"
+echo "[INFO] Detector backend   : ${EDGE_DETECTOR_BACKEND}"
+echo "[INFO] Detector min conf  : ${EDGE_DETECT_MIN_CONFIDENCE}"
+echo "[INFO] RKNN model path    : ${EDGE_RKNN_MODEL_PATH:-<auto>}"
+echo "[INFO] RKNN model version : ${EDGE_RKNN_MODEL_VERSION:-<auto>}"
+echo "[INFO] RKNN input size    : ${EDGE_RKNN_INPUT_SIZE}"
+echo "[INFO] RKNN labels        : ${EDGE_RKNN_LABELS}"
 echo "[INFO] Snapshot dir       : ${EDGE_SNAPSHOT_DIR}"
 echo "[INFO] Clip dir           : ${EDGE_CLIP_DIR}"
 echo "[INFO] Snapshot buf size  : ${EDGE_SNAPSHOT_BUFFER_SIZE}"

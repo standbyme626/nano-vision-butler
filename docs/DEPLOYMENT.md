@@ -82,6 +82,9 @@
 - `EDGE_INTERVAL_SEC`：循环间隔秒数（默认 `5`）。
 - `EDGE_DEVICE_ID` / `EDGE_CAMERA_ID`：设备与相机标识。
 - `EDGE_BACKEND_BASE_URL`：后端地址（默认 `http://127.0.0.1:8000`）。
+- `EDGE_DETECTOR_BACKEND`：`auto | rknn | lightweight`（默认 `auto`）。
+- `EDGE_RKNN_MODEL_PATH` / `EDGE_RKNN_MODEL_VERSION`：RKNN 模型路径与版本。
+- `EDGE_RKNN_INPUT_SIZE` / `EDGE_RKNN_LABELS`：输入尺寸与类别标签。
 - `EDGE_SNAPSHOT_DIR` / `EDGE_CLIP_DIR`：本地媒体目录。
 
 示例：
