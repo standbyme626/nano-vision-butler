@@ -187,10 +187,7 @@ class EdgeDeviceRuntime:
         self.config.snapshot_dir.mkdir(parents=True, exist_ok=True)
         file_name = f"{self.config.camera_id}_{frame.frame_id}.jpg"
         output = self.config.snapshot_dir / file_name
-        output.write_text(
-            f"stub snapshot for {frame.frame_id} captured at {frame.captured_at}\n",
-            encoding="utf-8",
-        )
+        self._write_snapshot_jpeg(output=output, frame=frame)
         return SnapshotItem(
             snapshot_id=f"snap-{uuid4().hex[:12]}",
             captured_at=frame.captured_at,
@@ -199,6 +196,65 @@ class EdgeDeviceRuntime:
             width=frame.width,
             height=frame.height,
         )
+
+    def _write_snapshot_jpeg(self, *, output: Path, frame: CapturedFrame) -> None:
+        width = max(int(frame.width), 1)
+        height = max(int(frame.height), 1)
+        overlay_title = f"{self.config.camera_id} {frame.frame_id}"
+        overlay_meta = f"{frame.captured_at} {frame.pixel_format}"
+
+        try:
+            from PIL import Image, ImageDraw
+
+            image = Image.new("RGB", (width, height), color=(16, 18, 22))
+            draw = ImageDraw.Draw(image)
+            band_h = max(height // 14, 20)
+            draw.rectangle([(0, 0), (width, band_h)], fill=(42, 108, 198))
+            draw.text((10, 6), overlay_title, fill=(255, 255, 255))
+            draw.text((10, band_h + 8), overlay_meta, fill=(230, 230, 230))
+            draw.rectangle([(0, height - 6), (width, height)], fill=(42, 108, 198))
+            image.save(output, format="JPEG", quality=90, optimize=True)
+            return
+        except Exception as pil_exc:
+            pil_error = pil_exc
+
+        try:
+            import cv2
+            import numpy as np
+
+            canvas = np.zeros((height, width, 3), dtype=np.uint8)
+            canvas[:, :] = (22, 18, 16)
+            band_h = max(height // 14, 20)
+            cv2.rectangle(canvas, (0, 0), (width - 1, band_h), (198, 108, 42), thickness=-1)
+            cv2.putText(
+                canvas,
+                overlay_title[:80],
+                (10, min(20, band_h - 2)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas,
+                overlay_meta[:110],
+                (10, min(height - 10, band_h + 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (230, 230, 230),
+                1,
+                cv2.LINE_AA,
+            )
+            ok = cv2.imwrite(str(output), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if not ok:
+                raise RuntimeError("cv2.imwrite returned False")
+            return
+        except Exception as cv_exc:
+            raise RuntimeError(
+                "Failed to encode snapshot JPEG "
+                f"(pillow={pil_error!r}, opencv={cv_exc!r})"
+            ) from cv_exc
 
     def _assemble_clip(self, duration_sec: int) -> ClipItem:
         duration = max(int(duration_sec), 1)

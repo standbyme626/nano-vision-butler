@@ -24,7 +24,7 @@
 - [x] Prompt12A RK3566 板级 bring-up 与基线测量（新增 baseline 脚本与报告模板，2026-03-14 自检通过）
 - [x] Prompt12B 前端协议冻结（event/heartbeat/command）（新增 protocol 文档、三份 schema、入站 schema_version 校验，2026-03-14 测试通过）
 - [x] Prompt12C 真实采集层替换（V4L2/GStreamer）（新增真实采集实现与重试机制，2026-03-14 单测通过）
-- [ ] Prompt12D 真实 Snapshot 落地（JPEG）
+- [x] Prompt12D 真实 Snapshot 落地（JPEG）（_store_snapshot 真实 JPEG + 回传落库测试，2026-03-14 通过）
 - [ ] Prompt12E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
 - [ ] Prompt12F RKNN 检测模型部署（主检测）
 - [ ] Prompt12G 跟踪/Zone/事件压缩质量提升
@@ -56,7 +56,7 @@
 - [x] T13A 板级 bring-up 与基线测量（新增 baseline 脚本与报告模板，2026-03-14 自检通过）
 - [x] T13B 前端协议冻结（event/heartbeat/command）（新增 protocol 文档、三份 schema、入站 schema_version 校验，2026-03-14 测试通过）
 - [x] T13C 真实采集层替换（V4L2/GStreamer）（新增真实采集实现与重试机制，2026-03-14 单测通过）
-- [ ] T13D 真实 Snapshot 落地（JPEG）
+- [x] T13D 真实 Snapshot 落地（JPEG）（_store_snapshot 真实 JPEG + 回传落库测试，2026-03-14 通过）
 - [ ] T13E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
 - [ ] T13F RKNN 检测模型部署（主检测）
 - [ ] T13G 跟踪/Zone/事件压缩质量提升

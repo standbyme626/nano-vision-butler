@@ -93,4 +93,4 @@ python3 -m edge_device.api.server get-recent-clip --duration-sec 6
 - 采集层已支持 `V4L2/GStreamer/FFmpeg`；通过 `EDGE_CAPTURE_*` 参数切换与调优。
 - `LightweightDetector.detect`：替换为 RKNN 推理调用。
 - `LightweightTracker.assign_tracks`：替换为真实多目标跟踪器（如 ByteTrack 简化版）。
-- `_store_snapshot/_assemble_clip`：替换为真实 JPEG 编码和短视频封装流程。
+- `_store_snapshot` 已支持真实 JPEG 编码；`_assemble_clip` 仍为占位实现，待 T13H 真实化。
