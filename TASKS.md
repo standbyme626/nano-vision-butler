@@ -231,9 +231,11 @@
 
 ### 输出
 - src/db/session.py（SQLite 线程切换兼容）
+- src/services/perception_service.py（ingest_event 刷新设备在线状态）
 - config/runtime/cameras.yaml（修复 RTSP 地址）
 - scripts/start_edge.sh（修复默认后端地址并支持位置参数 action）
 - tests/unit/test_db_session.py（线程回归测试）
+- tests/integration/test_device_event_flow.py（事件刷新在线状态回归测试）
 
 ### 验收
 - /device/status 返回 `effective_status=online`（心跳后）

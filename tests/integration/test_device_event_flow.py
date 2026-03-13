@@ -84,6 +84,47 @@ class DeviceEventFlowIntegrationTests(unittest.TestCase):
         self.assertEqual(events, 1)
         self.assertGreaterEqual(audits, 1)
 
+    def test_ingest_event_refreshes_device_liveness(self) -> None:
+        heartbeat = self.client.post(
+            "/device/heartbeat",
+            json={
+                "device_id": "rk3566-dev-01",
+                "camera_id": "cam-entry-01",
+                "status": "offline",
+                "last_seen": "2000-01-01T00:00:00Z",
+                "trace_id": "t15-int-heartbeat-offline",
+            },
+        )
+        self.assertEqual(heartbeat.status_code, 200)
+
+        status_before = self.client.get("/device/status", params={"device_id": "rk3566-dev-01"})
+        self.assertEqual(status_before.status_code, 200)
+        self.assertFalse(status_before.json()["data"]["is_online"])
+
+        ingest = self.client.post(
+            "/device/ingest/event",
+            json={
+                "device_id": "rk3566-dev-01",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+                "object_name": "person",
+                "event_type": "object_detected",
+                "importance": 4,
+                "confidence": 0.88,
+                "observed_at": "2026-03-14T02:40:00Z",
+                "trace_id": "t15-int-ingest-refresh",
+            },
+        )
+        self.assertEqual(ingest.status_code, 200)
+        self.assertTrue(ingest.json()["data"]["accepted"])
+
+        status_after = self.client.get("/device/status", params={"device_id": "rk3566-dev-01"})
+        self.assertEqual(status_after.status_code, 200)
+        payload = status_after.json()["data"]
+        self.assertTrue(payload["is_online"])
+        self.assertEqual(payload["effective_status"], "online")
+        self.assertEqual(payload["status"], "online")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

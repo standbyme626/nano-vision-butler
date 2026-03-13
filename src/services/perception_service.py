@@ -54,6 +54,9 @@ class PerceptionService:
             ingest_payload = dict(payload)
             ingest_payload["device_id"] = device_id
             ingest_payload.setdefault("camera_id", device.camera_id)
+            # Event ingress is a liveness signal from edge; keep device status warm.
+            device = self._refresh_device_from_event(device=device, payload=ingest_payload)
+            ingest_payload["camera_id"] = device.camera_id
 
             observation = self._memory_service.save_observation_from_payload(ingest_payload)
             promoted_event = self._memory_service.promote_observation_if_needed(ingest_payload, observation)
@@ -263,6 +266,37 @@ class PerceptionService:
             updated_at=None,
         )
         return self._device_repo.save_device_status(bootstrap)
+
+    def _refresh_device_from_event(self, *, device: DeviceStatus, payload: dict[str, Any]) -> DeviceStatus:
+        now = utc_now_iso8601()
+        event_last_seen = (
+            self._as_optional_text(payload.get("observed_at"))
+            or self._as_optional_text(payload.get("last_seen"))
+            or now
+        )
+        camera_id = self._as_optional_text(payload.get("camera_id")) or device.camera_id
+        if not camera_id:
+            raise ValueError(f"camera_id missing for device_id={device.device_id}")
+        refreshed = DeviceStatus(
+            id=device.id,
+            device_id=device.device_id,
+            camera_id=camera_id,
+            device_name=self._coalesce_text(payload, "device_name", device.device_name),
+            api_key_hash=device.api_key_hash,
+            status="online",
+            ip_addr=self._coalesce_text(payload, "ip_addr", device.ip_addr),
+            firmware_version=self._coalesce_text(payload, "firmware_version", device.firmware_version),
+            model_version=self._coalesce_text(payload, "model_version", device.model_version),
+            temperature=self._coalesce_float(payload, "temperature", device.temperature),
+            cpu_load=self._coalesce_float(payload, "cpu_load", device.cpu_load),
+            npu_load=self._coalesce_float(payload, "npu_load", device.npu_load),
+            free_mem_mb=self._coalesce_int(payload, "free_mem_mb", device.free_mem_mb),
+            camera_fps=self._coalesce_int(payload, "camera_fps", device.camera_fps),
+            last_seen=event_last_seen,
+            created_at=device.created_at,
+            updated_at=now,
+        )
+        return self._device_repo.save_device_status(refreshed)
 
     def _trigger_state_refresh_hook(
         self,
