@@ -356,6 +356,25 @@
 
 ---
 
+## T12-Hotfix MCP kwargs 参数兼容
+状态：DONE
+优先级：P1
+依赖：T12
+
+### 目标
+兼容 nanobot 通过 `kwargs`（对象或 JSON 字符串）封装的 MCP 工具入参，避免 `camera_id/device_id` 丢失导致工具误报必填缺失。
+
+### 输出
+- `src/mcp_server/http_server.py` 增加 `kwargs` 解包与合并逻辑
+- `tests/unit/test_mcp_http_server.py` 新增 `kwargs` 字符串/对象兼容用例
+
+### 验收
+- `kwargs='{\"camera_id\":\"...\"}'` 能被正确传入工具
+- `kwargs={...}` 能被正确传入工具
+- MCP 相关单测与集成测试通过
+
+---
+
 ## T13 RK3566 前端最小正式实现
 状态：DONE
 优先级：P2

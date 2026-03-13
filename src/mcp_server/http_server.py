@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,9 +12,43 @@ from mcp.server.fastmcp import FastMCP
 from src.mcp_server.server import VisionButlerMCPServer, create_server
 
 
+def _normalize_tool_args(raw_args: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(raw_args, dict):
+        return {}
+
+    payload = dict(raw_args)
+    nested = payload.pop("kwargs", None)
+    if nested is None:
+        return payload
+
+    parsed_kwargs: dict[str, Any] | None = None
+    if isinstance(nested, dict):
+        parsed_kwargs = nested
+    elif isinstance(nested, str):
+        text = nested.strip()
+        if not text:
+            parsed_kwargs = {}
+        else:
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                parsed_kwargs = None
+            else:
+                if isinstance(decoded, dict):
+                    parsed_kwargs = decoded
+
+    if parsed_kwargs is None:
+        payload["kwargs"] = nested
+        return payload
+
+    payload.update(parsed_kwargs)
+    return payload
+
+
 def _tool_handler_factory(server: VisionButlerMCPServer, tool_name: str) -> Callable[..., dict[str, Any]]:
     def _handler(**kwargs: Any) -> dict[str, Any]:
-        return server.call_tool(name=tool_name, args=kwargs or {})
+        normalized = _normalize_tool_args(kwargs or {})
+        return server.call_tool(name=tool_name, args=normalized)
 
     _handler.__name__ = f"tool_{tool_name}"
     return _handler

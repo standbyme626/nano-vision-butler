@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from src.mcp_server.http_server import build_http_server
 
@@ -63,6 +63,56 @@ class MCPHttpServerTests(unittest.TestCase):
         result = handler(device_id="rk3566-dev-01")
         self.assertEqual(result, {"ok": True, "summary": "ok"})
         facade.call_tool.assert_called_with(name="take_snapshot", args={"device_id": "rk3566-dev-01"})
+
+    def test_tool_handler_unwraps_kwargs_json_string(self) -> None:
+        facade = Mock()
+        facade.list_tools.return_value = [{"name": "describe_scene", "description": "scene"}]
+        facade.call_tool.return_value = {"ok": True, "summary": "ok"}
+
+        with patch("src.mcp_server.http_server.create_server", return_value=facade):
+            with patch("src.mcp_server.http_server.FastMCP", new=_FakeFastMCP):
+                server = build_http_server(
+                    config_dir="config",
+                    host="0.0.0.0",
+                    port=8001,
+                    streamable_http_path="/mcp",
+                )
+
+        handler = server.registered_tools["describe_scene"]["handler"]
+        self.assertTrue(callable(handler))
+        result = handler(kwargs='{"camera_id":"cam-entry-01","zone_id":"z-entry-01"}', trace_id="t-1")
+        self.assertEqual(result, {"ok": True, "summary": "ok"})
+        facade.call_tool.assert_called_with(
+            name="describe_scene",
+            args={"camera_id": "cam-entry-01", "zone_id": "z-entry-01", "trace_id": "t-1"},
+        )
+
+    def test_tool_handler_unwraps_kwargs_object(self) -> None:
+        facade = Mock()
+        facade.list_tools.return_value = [{"name": "get_recent_clip", "description": "clip"}]
+        facade.call_tool.return_value = {"ok": True, "summary": "ok"}
+
+        with patch("src.mcp_server.http_server.create_server", return_value=facade):
+            with patch("src.mcp_server.http_server.FastMCP", new=_FakeFastMCP):
+                server = build_http_server(
+                    config_dir="config",
+                    host="0.0.0.0",
+                    port=8001,
+                    streamable_http_path="/mcp",
+                )
+
+        handler = server.registered_tools["get_recent_clip"]["handler"]
+        self.assertTrue(callable(handler))
+        result = handler(kwargs={"camera_id": "cam-entry-01", "duration_sec": 10}, user_id="7566115125")
+        self.assertEqual(result, {"ok": True, "summary": "ok"})
+        facade.call_tool.assert_has_calls(
+            [
+                call(
+                    name="get_recent_clip",
+                    args={"camera_id": "cam-entry-01", "duration_sec": 10, "user_id": "7566115125"},
+                )
+            ]
+        )
 
 
 if __name__ == "__main__":
