@@ -40,7 +40,9 @@ def require_positive_limit(limit: int) -> int:
 
 
 def create_connection(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+    # FastAPI may hand off sync dependency work between worker threads inside one request.
+    # Allow thread handoff for request-scoped connections; lifecycle is still per-request.
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")

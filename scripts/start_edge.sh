@@ -8,12 +8,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${EDGE_INTERVAL_SEC:=5}"
 : "${EDGE_DEVICE_ID:=rk3566-dev-01}"
 : "${EDGE_CAMERA_ID:=cam-entry-01}"
-: "${EDGE_BACKEND_BASE_URL:=http://100.92.134.46:8000}"
+: "${EDGE_BACKEND_BASE_URL:=http://127.0.0.1:8000}"
 : "${EDGE_SNAPSHOT_DIR:=${ROOT_DIR}/data/edge_device/snapshots}"
 : "${EDGE_CLIP_DIR:=${ROOT_DIR}/data/edge_device/clips}"
 : "${EDGE_SNAPSHOT_BUFFER_SIZE:=32}"
 : "${EDGE_CLIP_BUFFER_SIZE:=16}"
 : "${PYTHON_BIN:=python3}"
+
+if [[ $# -gt 0 ]]; then
+  EDGE_ACTION="$1"
+  shift
+fi
 
 mkdir -p "${EDGE_SNAPSHOT_DIR}" "${EDGE_CLIP_DIR}" "${ROOT_DIR}/logs"
 cd "${ROOT_DIR}"

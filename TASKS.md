@@ -221,6 +221,28 @@
 
 ---
 
+## T7-Hotfix 摄像头可用性修复（SQLite 线程 + runtime 配置）
+状态：DONE
+优先级：P1
+依赖：T7
+
+### 目标
+修复摄像头“看起来在线但命令不可用”的关键问题，恢复心跳与命令链路可用性。
+
+### 输出
+- src/db/session.py（SQLite 线程切换兼容）
+- config/runtime/cameras.yaml（修复 RTSP 地址）
+- scripts/start_edge.sh（修复默认后端地址并支持位置参数 action）
+- tests/unit/test_db_session.py（线程回归测试）
+
+### 验收
+- /device/status 返回 `effective_status=online`（心跳后）
+- /device/command/take-snapshot 可成功
+- /device/command/get-recent-clip 可成功
+- pytest 全量通过
+
+---
+
 ## T8 OCR 双通道
 状态：DONE
 优先级：P1
