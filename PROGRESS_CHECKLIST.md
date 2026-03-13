@@ -2,7 +2,7 @@
 
 说明：每项完成后打勾，并在备注中记录验收证据（命令输出、截图、测试名）。
 
-## A. Prompt 执行清单（主序列 1-15 + 补充 02B/11B）
+## A. Prompt 执行清单（主序列 1-15 + 补充 02B/11B/12A-12I）
 - [x] Prompt01 初始化仓库与文档骨架
 - [x] Prompt02 实现数据库与迁移系统
 - [x] Prompt02B 实现配置系统（补充）
@@ -21,11 +21,20 @@
 - [x] Prompt11B-Hotfix Telegram 重复消费防护（单 token 单实例）
 - [x] Prompt11B-Hotfix MCP kwargs 参数兼容（避免 camera_id/device_id 丢失）
 - [x] Prompt12 RK3566 前端最小正式实现
+- [ ] Prompt12A RK3566 板级 bring-up 与基线测量
+- [ ] Prompt12B 前端协议冻结（event/heartbeat/command）
+- [ ] Prompt12C 真实采集层替换（V4L2/GStreamer）
+- [ ] Prompt12D 真实 Snapshot 落地（JPEG）
+- [ ] Prompt12E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
+- [ ] Prompt12F RKNN 检测模型部署（主检测）
+- [ ] Prompt12G 跟踪/Zone/事件压缩质量提升
+- [ ] Prompt12H Recent Clip 真实化（MP4 + ring buffer）
+- [ ] Prompt12I 可靠性/安全/压测验收
 - [x] Prompt13 安全与访问控制落地
 - [x] Prompt14 测试矩阵落地
 - [x] Prompt15 最终联调收尾与交付
 
-## B. TASKS 任务清单（T0-T16）
+## B. TASKS 任务清单（T0-T16 + T13A-T13I）
 - [x] T0 仓库初始化与约束固化
 - [x] T1 数据库与迁移系统
 - [x] T2 配置系统
@@ -44,6 +53,15 @@
 - [x] T12-Hotfix Telegram 重复消费防护（单 token 单实例）
 - [x] T12-Hotfix MCP kwargs 参数兼容（避免 camera_id/device_id 丢失）
 - [x] T13 RK3566 前端最小正式实现
+- [ ] T13A 板级 bring-up 与基线测量
+- [ ] T13B 前端协议冻结（event/heartbeat/command）
+- [ ] T13C 真实采集层替换（V4L2/GStreamer）
+- [ ] T13D 真实 Snapshot 落地（JPEG）
+- [ ] T13E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
+- [ ] T13F RKNN 检测模型部署（主检测）
+- [ ] T13G 跟踪/Zone/事件压缩质量提升
+- [ ] T13H Recent Clip 真实化（MP4 + ring buffer）
+- [ ] T13I 可靠性/安全/压测验收
 - [x] T14 安全与访问控制落地
 - [x] T15 测试矩阵落地
 - [x] T16 最终联调收尾与交付
