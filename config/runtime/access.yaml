@@ -14,14 +14,14 @@ roles:
 
 telegram_allowlist:
   user_ids:
-    - "42"
+    - "7566115125"
 
 device_allowlist:
   device_ids:
     - rk3566-dev-01
 
 user_roles:
-  "42": owner
+  "7566115125": owner
 
 mcp_tool_allowlist:
   - get_world_state
