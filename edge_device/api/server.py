@@ -131,11 +131,11 @@ class EdgeDeviceRuntime:
             },
         }
 
-    def take_snapshot(self, *, trace_id: str | None = None) -> dict[str, Any]:
+    def take_snapshot(self, *, trace_id: str | None = None, command_id: str | None = None) -> dict[str, Any]:
         frame = self.camera.capture_latest_frame()
         snapshot = self._store_snapshot(frame)
         self.cache.add_snapshot(snapshot)
-        command_id = f"cmd-snapshot-{uuid4().hex[:12]}"
+        effective_command_id = command_id or f"cmd-snapshot-{uuid4().hex[:12]}"
         return {
             "ok": True,
             "type": "command_response",
@@ -143,7 +143,7 @@ class EdgeDeviceRuntime:
             "summary": "Snapshot command completed",
             "data": {
                 "command": "take_snapshot",
-                "command_id": command_id,
+                "command_id": effective_command_id,
                 "device_id": self.config.device_id,
                 "camera_id": self.config.camera_id,
                 "snapshot_uri": snapshot.uri,
@@ -156,13 +156,19 @@ class EdgeDeviceRuntime:
             },
         }
 
-    def get_recent_clip(self, *, duration_sec: int = 6, trace_id: str | None = None) -> dict[str, Any]:
+    def get_recent_clip(
+        self,
+        *,
+        duration_sec: int = 6,
+        trace_id: str | None = None,
+        command_id: str | None = None,
+    ) -> dict[str, Any]:
         clip = self.cache.get_recent_clip(duration_sec)
         if clip is None:
             clip = self._assemble_clip(duration_sec)
             self.cache.add_clip(clip)
 
-        command_id = f"cmd-clip-{uuid4().hex[:12]}"
+        effective_command_id = command_id or f"cmd-clip-{uuid4().hex[:12]}"
         return {
             "ok": True,
             "type": "command_response",
@@ -170,7 +176,7 @@ class EdgeDeviceRuntime:
             "summary": "Recent clip command completed",
             "data": {
                 "command": "get_recent_clip",
-                "command_id": command_id,
+                "command_id": effective_command_id,
                 "device_id": self.config.device_id,
                 "camera_id": self.config.camera_id,
                 "duration_sec": clip.duration_sec,
@@ -335,6 +341,7 @@ def main() -> None:
     )
     parser.add_argument("--duration-sec", type=int, default=6, help="Clip duration for get-recent-clip")
     parser.add_argument("--trace-id", type=str, default=None, help="Optional trace ID")
+    parser.add_argument("--command-id", type=str, default=None, help="Optional command ID")
     args = parser.parse_args()
 
     runtime = EdgeDeviceRuntime(config=load_config_from_env())
@@ -343,9 +350,13 @@ def main() -> None:
     elif args.action == "heartbeat":
         result = runtime.send_heartbeat(trace_id=args.trace_id)
     elif args.action == "take-snapshot":
-        result = runtime.take_snapshot(trace_id=args.trace_id)
+        result = runtime.take_snapshot(trace_id=args.trace_id, command_id=args.command_id)
     else:
-        result = runtime.get_recent_clip(duration_sec=args.duration_sec, trace_id=args.trace_id)
+        result = runtime.get_recent_clip(
+            duration_sec=args.duration_sec,
+            trace_id=args.trace_id,
+            command_id=args.command_id,
+        )
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

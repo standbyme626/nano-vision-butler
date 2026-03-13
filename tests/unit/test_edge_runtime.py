@@ -94,6 +94,16 @@ class EdgeRuntimeUnitTests(unittest.TestCase):
         self.assertEqual(clip["data"]["duration_sec"], 6)
         self.assertTrue(clip["data"]["clip_uri"].startswith("file://"))
 
+    def test_command_id_can_be_provided_by_caller(self) -> None:
+        snapshot = self.runtime.take_snapshot(trace_id="trace-edge-snapshot-explicit", command_id="cmd-snapshot-explicit")
+        clip = self.runtime.get_recent_clip(
+            duration_sec=6,
+            trace_id="trace-edge-clip-explicit",
+            command_id="cmd-clip-explicit",
+        )
+        self.assertEqual(snapshot["data"]["command_id"], "cmd-snapshot-explicit")
+        self.assertEqual(clip["data"]["command_id"], "cmd-clip-explicit")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

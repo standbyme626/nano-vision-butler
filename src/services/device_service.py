@@ -16,6 +16,7 @@ from src.db.session import utc_now_iso8601
 from src.schemas.device import DeviceStatus
 from src.schemas.memory import MediaItem
 from src.schemas.security import AuditLog
+from src.services.edge_command_client import EdgeCommandClient, EdgeCommandClientError
 from src.settings import AppConfig
 
 
@@ -28,45 +29,6 @@ class DeviceExecutionError(ValueError):
         super().__init__(f"{code}: {message}")
 
 
-class StubEdgeDeviceAdapter:
-    """Stub adapter to keep command interface stable before real RK3566 SDK."""
-
-    def take_snapshot(self, *, device: DeviceStatus, camera_id: str, command_id: str) -> dict[str, Any]:
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        file_name = f"{camera_id}_snapshot_{timestamp}.jpg"
-        return {
-            "uri": f"file://{file_name}",
-            "file_name": file_name,
-            "mime_type": "image/jpeg",
-            "width": 1280,
-            "height": 720,
-            "duration_sec": None,
-            "sha256": None,
-            "meta": {"adapter": "stub", "command_id": command_id, "device_id": device.device_id},
-        }
-
-    def get_recent_clip(
-        self,
-        *,
-        device: DeviceStatus,
-        camera_id: str,
-        duration_sec: int,
-        command_id: str,
-    ) -> dict[str, Any]:
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        file_name = f"{camera_id}_clip_{duration_sec}s_{timestamp}.mp4"
-        return {
-            "uri": f"file://{file_name}",
-            "file_name": file_name,
-            "mime_type": "video/mp4",
-            "width": 1280,
-            "height": 720,
-            "duration_sec": duration_sec,
-            "sha256": None,
-            "meta": {"adapter": "stub", "command_id": command_id, "device_id": device.device_id},
-        }
-
-
 class DeviceService:
     """Service boundary for device status and command execution."""
 
@@ -77,13 +39,13 @@ class DeviceService:
         media_repo: MediaRepo,
         audit_repo: AuditRepo,
         config: AppConfig,
-        adapter: StubEdgeDeviceAdapter | None = None,
+        adapter: EdgeCommandClient | None = None,
     ) -> None:
         self._device_repo = device_repo
         self._media_repo = media_repo
         self._audit_repo = audit_repo
         self._config = config
-        self._adapter = adapter or StubEdgeDeviceAdapter()
+        self._adapter = adapter or EdgeCommandClient(config=config)
         self._device_profiles = self._build_device_profiles()
 
     def get_device_status(self, device_id: str) -> dict[str, Any] | None:
@@ -121,7 +83,16 @@ class DeviceService:
             device = self._resolve_device(payload)
             camera_id = device.camera_id
             self._ensure_online_for_command(device)
-            result = self._adapter.take_snapshot(device=device, camera_id=camera_id, command_id=command_id)
+            try:
+                result = self._adapter.take_snapshot(
+                    device=device,
+                    camera_id=camera_id,
+                    command_id=command_id,
+                    trace_id=self._as_text(payload.get("trace_id")),
+                )
+            except EdgeCommandClientError as exc:
+                raise DeviceExecutionError(exc.code, exc.message) from exc
+            adapter_meta = self._as_dict(result.get("meta"))
             media = self._persist_media_item(
                 owner_id=command_id,
                 media_type="image",
@@ -137,7 +108,12 @@ class DeviceService:
                 target_id=media.id,
                 reason="snapshot_created",
                 trace_id=self._as_text(payload.get("trace_id")),
-                meta={"camera_id": camera_id, "command_id": command_id, "uri": media.uri},
+                meta={
+                    "camera_id": camera_id,
+                    "command_id": command_id,
+                    "edge_command_id": self._as_text(adapter_meta.get("edge_command_id")),
+                    "uri": media.uri,
+                },
             )
             return {
                 "ok": True,
@@ -152,6 +128,8 @@ class DeviceService:
                 "meta": {
                     "command": "take_snapshot",
                     "command_id": command_id,
+                    "edge_command_id": self._as_text(adapter_meta.get("edge_command_id")),
+                    "adapter": self._as_text(adapter_meta.get("adapter")),
                     "requested_at": requested_at,
                     "local_path": media.local_path,
                 },
@@ -180,12 +158,17 @@ class DeviceService:
             camera_id = device.camera_id
             duration_sec = self._normalize_duration(payload)
             self._ensure_online_for_command(device)
-            result = self._adapter.get_recent_clip(
-                device=device,
-                camera_id=camera_id,
-                duration_sec=duration_sec,
-                command_id=command_id,
-            )
+            try:
+                result = self._adapter.get_recent_clip(
+                    device=device,
+                    camera_id=camera_id,
+                    duration_sec=duration_sec,
+                    command_id=command_id,
+                    trace_id=self._as_text(payload.get("trace_id")),
+                )
+            except EdgeCommandClientError as exc:
+                raise DeviceExecutionError(exc.code, exc.message) from exc
+            adapter_meta = self._as_dict(result.get("meta"))
             media = self._persist_media_item(
                 owner_id=command_id,
                 media_type="video",
@@ -204,6 +187,7 @@ class DeviceService:
                 meta={
                     "camera_id": camera_id,
                     "command_id": command_id,
+                    "edge_command_id": self._as_text(adapter_meta.get("edge_command_id")),
                     "duration_sec": duration_sec,
                     "uri": media.uri,
                 },
@@ -222,6 +206,8 @@ class DeviceService:
                 "meta": {
                     "command": "get_recent_clip",
                     "command_id": command_id,
+                    "edge_command_id": self._as_text(adapter_meta.get("edge_command_id")),
+                    "adapter": self._as_text(adapter_meta.get("adapter")),
                     "requested_at": requested_at,
                     "local_path": media.local_path,
                 },
@@ -390,6 +376,12 @@ class DeviceService:
             return None
         text = str(value).strip()
         return text if text else None
+
+    @staticmethod
+    def _as_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        return {}
 
     @staticmethod
     def _to_int(value: Any) -> int | None:
