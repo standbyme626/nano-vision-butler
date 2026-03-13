@@ -14,10 +14,18 @@ if [[ "${NANOBOT_INSTANCE}" != "prod" && "${NANOBOT_INSTANCE}" != "dev" ]]; then
 fi
 
 if [[ "${NANOBOT_INSTANCE}" == "prod" ]]; then
-  DEFAULT_CONFIG="${ROOT_DIR}/config/nanobot.config.json"
+  if [[ -f "${ROOT_DIR}/config/runtime/nanobot.config.json" ]]; then
+    DEFAULT_CONFIG="${ROOT_DIR}/config/runtime/nanobot.config.json"
+  else
+    DEFAULT_CONFIG="${ROOT_DIR}/config/nanobot.config.json"
+  fi
   DEFAULT_PORT="18790"
 else
-  DEFAULT_CONFIG="${ROOT_DIR}/config/nanobot.dev.config.json"
+  if [[ -f "${ROOT_DIR}/config/runtime/nanobot.dev.config.json" ]]; then
+    DEFAULT_CONFIG="${ROOT_DIR}/config/runtime/nanobot.dev.config.json"
+  else
+    DEFAULT_CONFIG="${ROOT_DIR}/config/nanobot.dev.config.json"
+  fi
   DEFAULT_PORT="18791"
 fi
 
