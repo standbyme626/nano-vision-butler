@@ -1,0 +1,12 @@
+{
+  "device_id": "rk3566-dev-01",
+  "camera_id": "cam-entry-01",
+  "event_type": "security_alert",
+  "object_name": "person",
+  "zone_id": "entry_door",
+  "confidence": 0.97,
+  "importance": 5,
+  "summary": "person detected near entry",
+  "trace_id": "trace-ingest-min-001"
+}
+

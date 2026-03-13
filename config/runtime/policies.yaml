@@ -1,0 +1,23 @@
+freshness:
+  default_ttl_sec: 300
+  object_overrides:
+    person: 30
+    package: 900
+    cup: 600
+
+stale:
+  stale_grace_sec: 120
+  allow_probabilistic_reply: true
+
+fallback:
+  enable_recheck_snapshot: true
+  recheck_timeout_sec: 15
+  uncertain_reply_template: "证据不足，建议触发重新拍照确认。"
+
+notifications:
+  default_cooldown_sec: 60
+  max_per_hour: 30
+
+security:
+  audit_sensitive_actions: true
+  require_access_check: true

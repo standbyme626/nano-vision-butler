@@ -1,0 +1,17 @@
+cameras:
+  - camera_id: cam-entry-01
+    device_id: rk3566-dev-01
+    display_name: entry-camera
+    stream:
+      source: "rtsp://__SET_CAMERA_URL__"
+      fps: 10
+      width: 1280
+      height: 720
+    zones:
+      - zone_id: entry_door
+        alias: 门口
+      - zone_id: hallway
+        alias: 走廊
+    retention:
+      snapshots_hours: 72
+      clips_hours: 48

@@ -1,0 +1,19 @@
+objects:
+  快递:
+    - package
+    - parcel
+  杯子:
+    - cup
+    - mug
+  钥匙:
+    - key
+    - keys
+
+zones:
+  门口: entry_door
+  走廊: hallway
+  客厅: living_room
+
+queries:
+  现在看一下门口: snapshot entry_door
+  最近门口发生了什么: events entry_door 1h

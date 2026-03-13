@@ -1,0 +1,63 @@
+<!-- source: 迁移版本草案.md | id: qmg8kv -->
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS telegram_updates (
+    id                TEXT PRIMARY KEY,
+    update_id         TEXT NOT NULL UNIQUE,
+    chat_id           TEXT,
+    from_user_id      TEXT,
+    message_type      TEXT,
+    message_text      TEXT,
+    received_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    processed_at      TEXT,
+    status            TEXT NOT NULL DEFAULT 'received'
+                      CHECK (status IN ('received', 'processed', 'failed')),
+    error_message     TEXT,
+    trace_id          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notification_rules (
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL,
+    rule_name         TEXT NOT NULL,
+    trigger_type      TEXT NOT NULL
+                      CHECK (trigger_type IN ('event', 'state_change', 'device_status')),
+    target_scope      TEXT,
+    condition_json    TEXT NOT NULL,
+    is_enabled        INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1)),
+    cooldown_sec      INTEGER NOT NULL DEFAULT 0,
+    last_triggered_at TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS facts (
+    id                TEXT PRIMARY KEY,
+    fact_key          TEXT NOT NULL UNIQUE,
+    fact_value        TEXT NOT NULL,
+    fact_type         TEXT NOT NULL DEFAULT 'string',
+    scope             TEXT DEFAULT 'global',
+    source            TEXT,
+    confidence        REAL,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS ocr_results (
+    id                TEXT PRIMARY KEY,
+    source_media_id   TEXT NOT NULL,
+    source_observation_id TEXT,
+    ocr_mode          TEXT NOT NULL
+                      CHECK (ocr_mode IN ('model_direct', 'tool_structured')),
+    raw_text          TEXT,
+    fields_json       TEXT,
+    boxes_json        TEXT,
+    language          TEXT,
+    confidence        REAL,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (source_media_id) REFERENCES media_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+    FOREIGN KEY (source_observation_id) REFERENCES observations(id) ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+COMMIT;

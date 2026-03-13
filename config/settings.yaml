@@ -1,0 +1,35 @@
+app:
+  name: nano-vision-butler
+  environment: development
+  timezone: Asia/Shanghai
+
+runtime:
+  entrypoint: telegram
+  nanobot_host_mode: external
+  model_provider: qwen
+
+telegram:
+  bot_token: "__SET_TELEGRAM_BOT_TOKEN__"
+  webhook_url: "__SET_TELEGRAM_WEBHOOK_URL__"
+  allowed_update_types:
+    - message
+    - callback_query
+
+nanobot:
+  base_url: "http://127.0.0.1:3000"
+  workspace: vision-butler
+
+mcp:
+  server_url: "http://127.0.0.1:8001"
+  timeout_sec: 20
+
+database:
+  path: "./data/vision_butler.db"
+  pragmas:
+    journal_mode: WAL
+    synchronous: NORMAL
+
+paths:
+  media_root: "./data/media"
+  snapshots_dir: "./data/media/snapshots"
+  clips_dir: "./data/media/clips"

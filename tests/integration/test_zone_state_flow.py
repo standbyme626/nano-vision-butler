@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+from fastapi.testclient import TestClient
+
+from src.app import create_app
+
+
+class ZoneStateFlowIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = tempfile.TemporaryDirectory(prefix="vision_butler_t15_zone_state_")
+        self.config_dir = Path(self.tmp_dir.name) / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+
+        repo_root = Path(__file__).resolve().parents[2]
+        source_config = repo_root / "config"
+        for name in [
+            "settings.yaml",
+            "policies.yaml",
+            "access.yaml",
+            "devices.yaml",
+            "cameras.yaml",
+            "aliases.yaml",
+        ]:
+            content = yaml.safe_load((source_config / name).read_text(encoding="utf-8"))
+            if name == "settings.yaml":
+                content["database"]["path"] = str(Path(self.tmp_dir.name) / "zone_state_flow.db")
+            (self.config_dir / name).write_text(
+                yaml.safe_dump(content, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+
+        self.app = create_app(config_dir=self.config_dir)
+        self.client = TestClient(self.app)
+        self.client.__enter__()
+
+    def tearDown(self) -> None:
+        self.client.__exit__(None, None, None)
+        self.tmp_dir.cleanup()
+
+    def test_zone_state_refresh_then_cached_state(self) -> None:
+        self.client.post(
+            "/device/heartbeat",
+            json={
+                "device_id": "rk3566-dev-01",
+                "camera_id": "cam-entry-01",
+                "status": "online",
+                "trace_id": "t15-zone-heartbeat",
+            },
+        )
+        self.client.post(
+            "/device/ingest/event",
+            json={
+                "device_id": "rk3566-dev-01",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+                "object_name": "package",
+                "confidence": 0.94,
+                "trace_id": "t15-zone-ingest-1",
+            },
+        )
+        self.client.post(
+            "/device/ingest/event",
+            json={
+                "device_id": "rk3566-dev-01",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+                "object_name": "person",
+                "confidence": 0.92,
+                "trace_id": "t15-zone-ingest-2",
+            },
+        )
+
+        first = self.client.get(
+            "/memory/zone-state",
+            params={"camera_id": "cam-entry-01", "zone_id": "entry_door"},
+        )
+        self.assertEqual(first.status_code, 200)
+        first_data = first.json()["data"]
+        self.assertEqual(first_data["state_value"], "occupied")
+        self.assertEqual(first_data["reason_code"], "refreshed_from_zone_observations")
+        self.assertGreaterEqual(int(first_data["evidence_count"]), 2)
+
+        second = self.client.get(
+            "/memory/zone-state",
+            params={"camera_id": "cam-entry-01", "zone_id": "entry_door"},
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["data"]["reason_code"], "state_row_found")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

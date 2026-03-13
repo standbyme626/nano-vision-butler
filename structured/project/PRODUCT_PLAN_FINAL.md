@@ -1,0 +1,1475 @@
+好的，我将把之前讨论的所有内容整合成一份完整的最终产品计划书，按照原计划书的章节顺序，并融入补充的目录结构、数据库设计、查询示例、迁移方案等，形成一份可直接作为项目总纲的文档。以下为整理后的完整计划书。
+
+---
+
+# 基于 nanobot 的视觉管家系统 v5
+
+## 最终版完整产品计划书（Telegram 正式版 / RK3566 单目前端 / Qwen3.5 多模态）
+
+---
+
+## 一、项目定义
+
+本项目定义为：**一个通过 Telegram 进行交互的视觉管家系统**。
+系统由六个正式组成部分构成：
+
+1. **Telegram Bot**：正式用户入口，负责接收文本、图片、语音、文件与回执。
+2. **nanobot Gateway**：唯一主控入口与 Agent 宿主，负责会话、模型调用、Skill 加载、MCP 接入与统一运行时。
+3. **Qwen3.5 多模态模型**：负责自然语言理解、视觉理解、简单 OCR、工具选择、答案整合。
+4. **MCP / Skill 层**：负责将外部能力标准化暴露给模型，并通过 Skill 约束调用顺序、时效规则与 fallback。
+5. **RK3566 单目前端**：负责图像采集、轻量检测、轻量跟踪、事件压缩、短时媒体缓存与设备健康上报。
+6. **后端 sidecar 服务**：负责 observation / event / state / policy / security / device 等业务事实层。
+
+这个定义与当前外部生态是相容的：nanobot README 已明确支持 Telegram channel、独立 workspace、MCP server 挂载，并可通过本地进程或 HTTP 远程服务接入外部能力；MCP 规范也明确允许 LLM 应用通过 JSON-RPC 2.0 与外部服务交换 tools、resources、prompts。([GitHub][2])
+
+---
+
+## 二、项目总目标
+
+本项目的最终目标不是做“看图聊天”，而是做一个**具备当前观察、历史回溯、当前状态推定、事件取证、简单 OCR、设备监测与权限边界**的完整视觉管家系统。系统必须支持下面这六类核心问题：
+
+* 现在看到了什么
+* 最近发生了什么
+* 某个对象最后一次在哪里出现
+* 某个对象现在大概率还在不在
+* 某个区域现在像不像有人 / 有物
+* 对当前画面、截图、标签、纸条做简单 OCR 或信息抽取
+
+其中，“**现在大概率还在不在**”和“**当前像不像有人**”是本项目区别于普通摄像头 Bot 的关键能力；它们不能只靠视觉大模型临时判断，而必须依赖 observation → event → state → freshness 的完整链路。Qwen 官方 Function Calling 文档明确指出：正确模式是“模型决定是否调用工具，应用执行工具，再把结果回灌给模型生成最终回答”；因此状态和记忆必须在工具层和服务层中保存，不能只在模型上下文里临时存在。([help.aliyun.com][3])
+
+---
+
+## 三、项目边界
+
+### 3.1 纳入范围
+
+本计划书的正式范围包括：
+
+* Telegram Bot 正式接入与消息处理
+* nanobot 作为唯一主控入口
+* Qwen3.5 多模态推理接入
+* RK3566 单目前端事件感知
+* snapshot / recent clip 获取
+* 当前画面问答
+* 最近事件查询
+* last_seen 查询
+* object_state / zone_state / world_state 查询
+* stale / freshness 判定
+* 简单 OCR 与结构化提取
+* MCP tools / resources / prompts
+* Skill 执行模板
+* 权限控制、设备认证与审计日志
+* SQLite + FTS5 数据层
+* 本地媒体存储与索引
+* 单机正式部署
+
+### 3.2 明确不做
+
+本项目明确不做：
+
+* 运动控制
+* ROS/ROS2 集成
+* 3D 建图
+* 多机器人协同
+* 云端多租户 SaaS
+* 高并发分布式平台
+* 完整 web 后台
+* 多摄像头空间拓扑重建
+* 基于单目的精确绝对深度和三维坐标系统
+
+最后这条尤其关键。因为你前端是**单目摄像头**，而单目视觉在绝对尺度和稳定 3D 深度上先天受限；因此本系统的“当前状态”应定义为**带时效与证据的推定状态**，而不是精确几何位置。Qwen 视觉模型文档虽然提到高精度物体识别与定位等能力，但你的系统应在产品层面主动把“几何精定位”排除在目标之外，把能力焦点放在“状态判断”和“时效判断”上。([help.aliyun.com][4])
+
+---
+
+## 四、总体产品定位
+
+本系统的正式产品定位是：
+
+> 一个通过 Telegram 与用户交互、能够理解视觉内容、调取历史证据、判断当前状态并以自然语言回报的单空间视觉管家。
+
+它不是监控平台，也不是通用安防 NVR。
+它更像是一个“**会看、会记、会回想、会说明自己把握有多大**”的空间助手。
+
+这个定位决定了它的输出风格必须是：
+
+* 回答“看到了什么”
+* 回答“我依据什么这么说”
+* 告诉用户“这条信息新不新”
+* 在证据不足时主动说明“不确定”或触发拍照回查
+
+MCP tools 规范强调 tools 是“模型可发现并自动调用的外部操作”，同时要求实现方重视安全和人工可控；你的系统正好适合这种范式：模型负责决定，工具负责执行，用户在 Telegram 中看到最终解释与证据摘要。([Model Context Protocol][5])
+
+---
+
+## 五、完整功能清单
+
+### 5.1 用户可直接使用的正式功能
+
+用户通过 Telegram 应能直接完成以下交互：
+
+1. **当前画面询问**
+   例如：
+
+   * 现在客厅里有什么
+   * 门口现在有人吗
+   * 厨房桌上现在是什么情况
+
+2. **最近事件查询**
+   例如：
+
+   * 最近 1 小时门口发生了什么
+   * 今天下午有没有人来过
+   * 最近有没有看到猫
+
+3. **最后一次出现查询**
+   例如：
+
+   * 杯子最后一次在哪里出现
+   * 快递最后一次是什么时候看到的
+
+4. **当前状态推定查询**
+   例如：
+
+   * 杯子现在大概率还在桌上吗
+   * 沙发区域现在像不像有人
+   * 玄关区域当前像不像有快递
+
+5. **主动取证**
+   例如：
+
+   * 现在拍一张门口
+   * 发最近 10 秒视频
+   * 重新确认一下桌面
+
+6. **简单 OCR / 信息抽取**
+   例如：
+
+   * 读一下门口纸条
+   * 看一下快递单写了什么
+   * 把标签里的编号提取出来
+
+7. **设备状态查询**
+   例如：
+
+   * 摄像头在线吗
+   * 最近有没有掉线
+   * 当前设备温度和负载怎样
+
+8. **规则与通知**
+   例如：
+
+   * 检测到门口有人就提醒
+   * 设备离线就发消息
+   * 物体状态变更时通知我
+
+这些功能全部应该作为正式功能写进计划书，不再作为“以后升级”。Telegram 官方 Bot API 已支持文本、图片、视频、语音、文档等消息类能力，并规定文本消息单条为 1–4096 字符；这意味着系统回复层必须支持**长回复分片**、**媒体附带说明**和**较长任务的过程反馈**。([Telegram][1])
+
+---
+
+## 六、系统总体架构
+
+系统采用“**单一用户入口 + 单一主控入口 + 外部业务事实层 + 边缘事件感知层**”架构。
+
+### 6.1 逻辑分层
+
+**入口层**
+
+* Telegram Bot
+
+**主控层**
+
+* nanobot gateway
+* channel adapter
+* session/runtime/workspace
+
+**认知层**
+
+* Qwen3.5 多模态模型
+* intent parsing
+* tool decision
+* answer synthesis
+
+**扩展层**
+
+* MCP tools
+* MCP resources
+* MCP prompts
+* Skills
+
+**业务事实层**
+
+* perception_service
+* memory_service
+* state_service
+* policy_service
+* security_guard
+* device_service
+
+**边缘层**
+
+* RK3566 单目前端
+* capture / detect / track / compress / cache / device api
+
+**数据层**
+
+* SQLite + FTS5
+* media storage
+* optional vector index
+
+这样切分的原因很明确：MCP 规范把 Resources、Prompts、Tools 定义为服务对外暴露的三种正式能力；nanobot 现阶段则已经能把外部 MCP 服务接成“原生 agent tools”。所以业务能力不应写死在 nanobot 核心内，而应放在 sidecar 服务，经 MCP 暴露给 nanobot。([Model Context Protocol][6])
+
+---
+
+## 七、Telegram 正式接入方案
+
+Telegram 在本项目中不是临时入口，而是**正式唯一用户入口**。
+
+### 7.1 接入方式
+
+系统首选 **polling（getUpdates）** 作为正式运行方式，同时保留 webhook 兼容能力。这样做不是因为 webhook 不重要，而是因为你当前系统目标是单机、单实例、单空间视觉管家，而 Telegram 官方明确说明 `getUpdates` 和 `setWebhook` 是两种互斥方式，且未被消费的更新最多只保留 24 小时。对于单机管家系统，polling 更容易部署、调试和恢复。([Telegram][1])
+
+### 7.2 Telegram 层必须具备的正式能力
+
+* 私聊问答
+* 图片/视频接收
+* 语音/文档接收（可选）
+* 长消息分片
+* sendChatAction 状态提示
+* 媒体回传
+* 命令式触发与自然语言触发并存
+* chat_id / user_id 白名单绑定
+* update offset 持久化
+* 异常恢复后避免重复消费
+
+### 7.3 Telegram 层的产品规则
+
+* 任何需要较长处理时间的请求，都要先发 typing / upload_photo 等状态提示。Telegram 官方专门提供 `sendChatAction` 来表达“系统正在处理”，用于避免长耗时视觉任务给用户造成“无响应”的感受。([Telegram][1])
+* 任意自然语言结果超过 4096 字符时，必须自动切分或转为摘要 + 附件。Telegram 对文本长度的官方限制就是 1–4096 字符。([Telegram][1])
+* 任何主动通知都必须落在 allowlist 目标上，不允许广播式滥发。
+
+---
+
+## 八、nanobot 在系统中的正式角色
+
+在本项目里，nanobot 的角色必须写死为：
+
+> **唯一主控入口、唯一 Agent 宿主、唯一模型调度入口；但不是业务事实层。**
+
+### 8.1 nanobot 负责什么
+
+* Telegram channel 接入
+* 会话管理
+* Qwen3.5 模型调用
+* Skill 加载
+* MCP server 连接
+* 工具调用编排
+* 回复生成与发送
+* 运行时 workspace / media / state 管理
+* 多实例隔离（测试 / 正式）
+
+nanobot 当前 README 已明确支持 Telegram 实例配置、workspace 隔离、多实例运行和 MCP server 配置；最新 release 也明确把 Telegram、MCP/tool 可靠性和多实例支持列为重点增强项。([GitHub][2])
+
+### 8.2 nanobot 不负责什么
+
+* observation / event / state 真相存储
+* stale/freshness 决策
+* device auth
+* 媒体访问授权
+* 业务数据库 schema
+* 前端事件协议
+* 视觉业务专用 dispatcher
+
+也就是说：**nanobot 是内核，不是你的业务真相层**。
+
+---
+
+## 九、Qwen3.5 多模态模型的正式职责
+
+你当前已经接入的是 **Qwen3.5 多模态本地量化模型**。在本计划书里，它的职责应定义为：
+
+### 9.1 模型负责
+
+* 理解用户自然语言
+* 理解图片与短视频的语义
+* 执行简单视觉问答
+* 执行简单 OCR
+* 判断是否需要调用外部工具
+* 将工具输出整合成可读回答
+* 使用结构化输出产出 JSON 格式结果
+
+Qwen 官方文档把 Qwen3.5 明确定位为视觉理解模型，覆盖多模态推理、复杂文档解析、视觉 Agent 等任务；阿里云的 Function Calling 文档也说明 Qwen3.5 支持“带工具清单的多轮调用”；结构化输出文档则说明可以用 JSON Object 或 JSON Schema 强制约束模型输出。([help.aliyun.com][4])
+
+### 9.2 模型不负责
+
+* 充当数据库
+* 充当状态真相层
+* 直接保存历史世界状态
+* 判定设备是否在线
+* 替代 stale/freshness 规则
+* 单独决定安全授权
+
+模型在本系统中是**认知与调度层**，不是**事实层**。
+
+---
+
+## 十、MCP 与 Skill 的正式定位
+
+### 10.1 MCP 的正式作用
+
+MCP 在本项目中是**标准化能力暴露层**。
+MCP 规范明确指出，Servers 可以向客户端暴露三类正式能力：
+
+* **Resources**：上下文与数据
+* **Prompts**：模板化工作流
+* **Tools**：可执行函数
+
+同时，Tools 被设计成模型可发现并自动调用的操作，使用 `tools/list` 与 `tools/call` 完成发现与执行。([Model Context Protocol][6])
+
+### 10.2 Skill 的正式作用
+
+Skill 在本项目中的角色不是替代工具，也不是替代 MCP，而是：
+
+* 把某类用户问题写成标准执行模板
+* 描述哪类问题触发哪些工具
+* 定义 freshness 优先级
+* 定义 fallback 顺序
+* 定义回复风格与证据引用方式
+
+也就是：
+**MCP 提供能力，Skill 组织能力，Qwen 决定是否触发能力。**
+
+### 10.3 本项目正式 MCP Tool 列表
+
+以下工具应作为首发正式工具纳入：
+
+* `take_snapshot`
+* `get_recent_clip`
+* `describe_scene`
+* `last_seen_object`
+* `get_object_state`
+* `get_zone_state`
+* `get_world_state`
+* `query_recent_events`
+* `evaluate_staleness`
+* `device_status`
+* `refresh_object_state`
+* `refresh_zone_state`
+* `ocr_quick_read`
+* `ocr_extract_fields`
+* `audit_recent_access`
+
+### 10.4 本项目正式 MCP Resource 列表
+
+* `resource://memory/observations`
+* `resource://memory/events`
+* `resource://memory/object_states`
+* `resource://memory/zone_states`
+* `resource://policy/freshness`
+* `resource://security/access_scope`
+* `resource://devices/status`
+
+### 10.5 本项目正式 MCP Prompt 列表
+
+* `scene_query`
+* `history_query`
+* `last_seen_query`
+* `object_state_query`
+* `zone_state_query`
+* `ocr_query`
+* `device_status_query`
+
+---
+
+## 十一、RK3566 单目前端正式设计
+
+### 11.1 前端硬件定位
+
+前端硬件是：**2G + 16G 的泰山派 RK3566，单目摄像头，Ubuntu 社区系统，已验证可运行 YOLO**。
+本计划书将其正式定义为：
+
+> **边缘事件感知终端**，不是边缘智能体，不是状态真相层。
+
+这一定义与 RK3566 官方能力相匹配：Rockchip 官方产品页给出的 RK3566 关键特性包括四核 Cortex-A55、1TOPS NPU、8M ISP；官方 brief datasheet 还列出 16-bit Camera Interface、4-lane MIPI-CSI RX、eMMC 5.1 等接口能力。也就是说，它非常适合做前端采集与轻量视觉，但不是用来承载复杂后端认知逻辑的。([rock-chips.com][7])
+
+### 11.2 前端正式职责
+
+前端只负责：
+
+* 相机采集
+* 预处理与 ISP 稳定
+* 轻量检测
+* 轻量跟踪
+* 事件压缩
+* 最近快照缓存
+* 最近片段缓存
+* 设备状态与心跳上报
+* 响应主动命令（拍照、取最近视频）
+
+### 11.3 前端明确不负责
+
+* 长期记忆
+* 状态聚合
+* stale/freshness 计算
+* 权限控制
+* Telegram 交互
+* MCP 调度
+* 大模型推理主流程
+* 复杂 OCR 主服务
+* world_state 生成
+
+### 11.4 前端模型选型原则
+
+Rockchip 的 RKNN Model Zoo 已明确支持 RK3566 平台，并列出了多种检测、分割、人脸与 OCR 模型，包括 YOLOv5、YOLOv6、YOLOv8、RetinaFace、PPOCR-Det、PPOCR-Rec 等。RKNN Toolkit2 的官方说明也明确要求：模型先在 PC 上转换成 RKNN，再在开发板上用 C API 或 Python API 执行推理。([GitHub][8])
+
+因此，前端的正式模型策略为：
+
+* **常驻主模型**：轻量目标检测模型 1 个
+* **按需模型**：文字检测/文字识别、人脸检测、局部分割
+* **不常驻**：重型图文匹配、大型分割、大 VLM
+
+### 11.5 前端推荐模型组合
+
+正式推荐组合为：
+
+* 主检测：`YOLOv6n` 或 `YOLOv5n`
+* 可选检测备份：`YOLOv8n`
+* OCR 检测：`PPOCR-Det`
+* OCR 识别：`PPOCR-Rec`
+* 人脸触发：`RetinaFace_mobile320`
+
+这不是因为它们“最先进”，而是因为 Rockchip 官方工具链对这些模型已经给出明确的 RK3566 支持路径。([GitHub][8])
+
+---
+
+## 十二、OCR 的最终正式方案
+
+这部分不再模糊，直接定为**双通道 OCR**。
+
+### 12.1 通道 A：模型原生 OCR
+
+用于：
+
+* 低频问答式 OCR
+* 简单标签 / 纸条 / 门牌 / 屏幕字
+* OCR 与视觉理解混合问题
+* 用户直接发一张图并问“写了什么”
+
+Qwen 官方视觉文档已把文字识别与信息抽取纳入多模态能力；结构化输出文档则允许你要求模型直接输出 JSON。([help.aliyun.com][4])
+
+### 12.2 通道 B：专用 OCR Tool
+
+用于：
+
+* 结构化字段提取
+* 长文本 OCR
+* 表格/票据/文档类 OCR
+* 需要保存为 observation/event 的高价值识别结果
+
+这个通道建议正式纳入项目首发，不再留到以后。
+可选实现有两条：
+
+* **Qwen-OCR 服务**：阿里云官方文档明确把 `qwen-vl-ocr` 定义为专用于文字提取的视觉理解模型，可做文本提取与结构化解析。([help.aliyun.com][9])
+* **PaddleOCR 服务**：PaddleOCR 官方项目明确支持模型库、推理与服务化部署，适合做独立 OCR 服务。([GitHub][10])
+
+### 12.3 正式产品策略
+
+* **默认**：简单 OCR 先由 Qwen3.5 直接处理
+* **结构化/高价值**：由 `ocr_extract_fields` 工具处理
+* **前端板端**：只做 OCR 候选区域检测与可选轻量识别，不承担系统主 OCR 真相层
+
+这样做的好处是：
+用户体验最好，系统也最可维护。
+
+---
+
+## 十三、核心业务模型：Observation / Event / State / Policy / Security
+
+### 13.1 Observation
+
+Observation 是原始或半结构化观察记录，字段至少包括：
+
+* `id`
+* `camera_id`
+* `zone_id`
+* `object_name`
+* `object_class`
+* `track_id`
+* `observed_at`
+* `confidence`
+* `snapshot_uri`
+* `clip_uri`
+* `fresh_until`
+* `source_event_id`
+* `visibility_scope`
+
+### 13.2 Event
+
+Event 是显著变化记录，不是每条 observation 都升级为 event。
+事件包括：
+
+* 有人出现 / 消失
+* 目标进入 / 离开区域
+* 设备上线 / 离线
+* OCR 提取到关键字段
+* 物体状态变化
+
+### 13.3 State
+
+State 是当前推定层，分为：
+
+* `object_state`
+* `zone_state`
+* `world_state`
+* `presence_state`
+
+其中：
+
+* `object_state` 表示某对象当前大概率在/不在/未知
+* `zone_state` 表示某区域当前占用/空/未知
+* `world_state` 作为全局摘要视图，不应过度复杂化
+* `presence_state` 用于人或生物体出现类判断
+
+### 13.4 Policy
+
+Policy 单独成层，负责：
+
+* `freshness_window`
+* `fresh_until`
+* `is_stale`
+* `recency_class`
+* `fallback_required`
+* `reason_code`
+
+### 13.5 Security
+
+Security 单独成层，负责：
+
+* Telegram 用户 allowlist
+* 设备 allowlist
+* tool allowlist per skill
+* resource scope per skill
+* media visibility scope
+* 审计日志
+
+MCP 规范明确提醒：工具意味着外部操作和代码执行，实施方必须认真处理安全与人机确认问题。你的安全层不是附属物，而是系统主层之一。([Model Context Protocol][6])
+
+---
+
+## 十四、数据库与存储
+
+### 14.1 数据库选型
+
+正式数据层使用：
+
+* SQLite
+* FTS5
+* 本地 media storage
+* optional vector index
+
+选择 SQLite 不是妥协，而是因为本项目边界就是**单机、单空间、单实例优先**。
+
+### 14.2 正式表结构
+
+本项目数据层采用 SQLite + FTS5。关系表负责保存 observation、event、state、device、media、audit 等结构化事实；FTS5 虚拟表负责保存 observation 文本、event 摘要、OCR 结果等全文检索内容。Telegram 作为正式入口时，额外保留 `telegram_updates` 表用于 update 去重、处理状态追踪和故障恢复。该设计既满足单机部署的一致性与可维护性，又为后续状态推理、OCR 搜索、历史检索与审计留出统一的数据基础。([sqlite.org][1])
+
+核心表包括：
+
+* `users`
+* `devices`
+* `observations`
+* `events`
+* `object_states`
+* `zone_states`
+* `media_items`
+* `audit_logs`
+* `telegram_updates`
+* `notification_rules`
+* `facts`
+* `ocr_results`
+
+以及 FTS5 虚拟表：
+* `observations_fts`
+* `events_fts`
+* `ocr_results_fts`
+
+具体字段定义和索引建议详见附录 A（或后续设计文档），但此处明确所有表均使用应用层生成的文本主键，避免与 SQLite 内部 `rowid` 语义混淆；FTS5 通过普通表触发器同步内容，不直接在虚拟表上定义索引或触发器。([sqlite.org][3])
+
+### 14.3 存储规则
+
+* 板端只保留短时缓存
+* 后端保留中长期媒体索引
+* observation 全量写入
+* event 仅显著性升级写入
+* state 只能由 observation/event 聚合生成
+* fact 仅写长期稳定信息
+
+---
+
+## 十五、后端服务设计
+
+### 15.1 perception_service
+
+接收前端事件流，校验设备身份，写 observation，触发状态更新。
+
+### 15.2 memory_service
+
+负责 observation / event / fact / state 的统一读写与查询。
+
+### 15.3 state_service
+
+负责生成与查询 object_state、zone_state、world_state。
+
+### 15.4 policy_service
+
+负责 freshness、stale、fallback 与 reason_code。
+
+### 15.5 device_service
+
+负责设备注册、在线状态、命令下发、设备回执。
+
+### 15.6 security_guard
+
+负责用户、设备、工具、资源、媒体的统一权限校验。
+
+### 15.7 reply_builder
+
+负责把工具结果、state 结果和模型生成结果拼成 Telegram 回复，并附带简明证据与 freshness 提示。
+
+---
+
+## 十六、正式 API 与内部契约
+
+### 16.1 正式对外查询接口
+
+* `/memory/recent-events`
+* `/memory/last-seen`
+* `/memory/object-state`
+* `/memory/zone-state`
+* `/memory/world-state`
+* `/policy/evaluate-staleness`
+* `/device/status`
+
+### 16.2 正式内部接口
+
+* `/device/command/take-snapshot`
+* `/device/command/get-recent-clip`
+* `/device/ingest/event`
+* `/device/heartbeat`
+* `/ocr/quick-read`
+* `/ocr/extract-fields`
+
+### 16.3 正式返回规范
+
+所有查询结果必须带：
+
+* `summary`
+* `source_layer`
+* `state_confidence`
+* `fresh_until`
+* `is_stale`
+* `fallback_required`
+* `evidence_count`
+
+这样 Telegram 端才能给出“**我为什么这么说**”。
+
+---
+
+## 十七、正式 Skill 设计
+
+每个 Skill 必须具备下面字段：
+
+* `name`
+* `description`
+* `trigger_patterns`
+* `allowed_tools`
+* `allowed_resources`
+* `auth_policy`
+* `freshness_policy`
+* `memory_write_policy`
+* `state_effects`
+* `fallback_rules`
+* `steps`
+* `output_schema`
+
+正式 Skill 至少包括：
+
+* `scene_query_skill`
+* `history_query_skill`
+* `last_seen_skill`
+* `object_state_skill`
+* `zone_state_skill`
+* `ocr_skill`
+* `device_status_skill`
+
+---
+
+## 十八、配置与部署设计
+
+### 18.1 nanobot 正式配置
+
+* 独立 `config.json`
+* Telegram channel enabled
+* token 配置
+* `allowFrom`
+* model provider / model name
+* `tools.mcpServers`
+* workspace 路径
+* gateway 端口
+
+nanobot README 已明确说明：
+Telegram 可作为独立实例运行；workspace、cron、media/runtime state 都可从配置目录衍生；MCP servers 可通过 `command+args` 或 `url+headers` 两种方式接入。([GitHub][2])
+
+### 18.2 前端部署
+
+* Ubuntu 社区系统
+* camera bring-up
+* RKNN runtime
+* detector service
+* tracker / compressor
+* local ring buffer
+* heartbeat daemon
+
+### 18.3 后端部署
+
+* nanobot gateway
+* sidecar services
+* SQLite
+* media directory
+* logs / audit
+* optional OCR service
+
+---
+
+## 十九、测试与验收
+
+### 19.1 单元测试
+
+* `test_state_service`
+* `test_policy_service`
+* `test_security_guard`
+* `test_memory_tiering`
+* `test_perception_service`
+* `test_ocr_routing`
+
+### 19.2 集成测试
+
+* `test_device_event_flow`
+* `test_object_state_flow`
+* `test_zone_state_flow`
+* `test_stale_fallback_flow`
+* `test_access_control_flow`
+* `test_telegram_message_flow`
+
+### 19.3 e2e 测试
+
+* Telegram 发问 → 返回当前观察
+* Telegram 发问 → 返回 last_seen
+* Telegram 发问 → 返回 stale 状态与 fallback
+* Telegram 发图 → 返回 OCR 结果
+* Telegram 请求拍照 → 返回最新图片
+* 设备离线 → 状态标记 stale → Telegram 告警
+
+### 19.4 正式验收标准
+
+系统只有同时满足以下条件才算完成：
+
+* Telegram 作为正式入口可稳定工作
+* nanobot + MCP + Skill 调度链路打通
+* RK3566 前端稳定上报事件
+* object_state / zone_state / world_state 可查询
+* stale / freshness / fallback 正确生效
+* 简单 OCR 能跑，结构化 OCR 工具可调用
+* 权限模型有效
+* 设备离线能被识别和告警
+* 所有关键路径有测试覆盖
+
+---
+
+## 二十、最终分析与结论
+
+我对这版最终方案的评价是：
+
+**这已经不是一个“想法”，而是一套可以直接组织开发的完整项目方案。**
+
+它最强的地方有四个。
+
+第一，**入口统一**。
+Telegram 是正式入口，不再漂移；Telegram 官方接口限制和 nanobot 当前 Telegram 支持都足以支撑这一设计。([Telegram][1])
+
+第二，**主控统一**。
+nanobot 被清楚地定义成唯一主控入口和 Agent 宿主；它现有的 MCP、workspace、多实例能力足够承担这个角色。([GitHub][2])
+
+第三，**模型职责明确**。
+Qwen3.5 负责理解和调度，而不是替代数据库、状态机和安全系统。这个边界和官方 Function Calling/结构化输出机制完全一致。([help.aliyun.com][3])
+
+第四，**前端边界正确**。
+RK3566 单目 2G+16G 被定义成“事件感知终端”，而不是“前端智能体”；这个决定会让整个系统长期可维护。Rockchip 官方资料显示 RK3566 具备 1TOPS NPU、8M ISP、MIPI-CSI 接入与 RKNN 部署路径，足以支撑轻量检测、OCR 候选检测和事件压缩，但不适合承担系统事实层。([rock-chips.com][7])
+
+**我建议你把这版作为“最终母版项目书”使用。**
+它已经可以直接往下派生成：架构说明、开发规格书、接口文档、测试计划、AGENTS.md、Skill 定义和 MCP 工具清单。
+
+下一步最合理的动作，就是把这版继续收敛成你要的正式文档格式：
+**“最终版产品计划书 v1.0”**，按章节号、条款、接口清单、模块职责、测试矩阵整理成可直接发团队执行的版本。
+
+---
+
+## 二十一、目录结构与仓库组织
+
+本项目建议采用“**主控仓 + 前端仓 + 配置仓**”三层组织，但如果你希望先用单仓推进，也可以先在一个仓库中按模块拆目录。核心原则不变：**nanobot 保持上游兼容，业务逻辑通过 MCP/Skill/sidecar 外挂**。nanobot 当前已经原生支持通过配置挂载 Telegram 与 MCP server，因此项目不应通过深改 nanobot 内核来组织业务。([GitHub][1])
+
+建议最终目录结构如下：
+
+```text
+vision_butler/
+├─ AGENTS.md
+├─ README.md
+├─ docs/
+│  ├─ PRODUCT_PLAN.md
+│  ├─ ARCHITECTURE.md
+│  ├─ DEPLOYMENT.md
+│  ├─ TELEGRAM_FLOW.md
+│  ├─ MCP_TOOLS.md
+│  ├─ SKILL_DESIGN.md
+│  ├─ STATE_MODEL.md
+│  ├─ FRESHNESS_POLICY.md
+│  ├─ SECURITY_MODEL.md
+│  ├─ OCR_STRATEGY.md
+│  └─ TEST_PLAN.md
+├─ config/
+│  ├─ nanobot.config.json
+│  ├─ settings.yaml
+│  ├─ policies.yaml
+│  ├─ access.yaml
+│  ├─ devices.yaml
+│  ├─ cameras.yaml
+│  └─ aliases.yaml
+├─ gateway/
+│  └─ nanobot_workspace/
+├─ edge_device/
+│  ├─ capture/
+│  ├─ inference/
+│  ├─ tracking/
+│  ├─ compression/
+│  ├─ cache/
+│  ├─ health/
+│  └─ api/
+├─ src/
+│  ├─ app.py
+│  ├─ dependencies.py
+│  ├─ routes_memory.py
+│  ├─ routes_state.py
+│  ├─ routes_policy.py
+│  ├─ routes_device.py
+│  ├─ routes_ocr.py
+│  ├─ services/
+│  │  ├─ perception_service.py
+│  │  ├─ memory_service.py
+│  │  ├─ state_service.py
+│  │  ├─ policy_service.py
+│  │  ├─ device_service.py
+│  │  ├─ ocr_service.py
+│  │  └─ reply_service.py
+│  ├─ security/
+│  │  ├─ security_guard.py
+│  │  └─ access_policy.py
+│  ├─ schemas/
+│  │  ├─ memory.py
+│  │  ├─ state.py
+│  │  ├─ policy.py
+│  │  ├─ security.py
+│  │  ├─ device.py
+│  │  └─ telegram.py
+│  ├─ db/
+│  │  ├─ session.py
+│  │  ├─ migrations/
+│  │  └─ repositories/
+│  │     ├─ observation_repo.py
+│  │     ├─ event_repo.py
+│  │     ├─ state_repo.py
+│  │     ├─ device_repo.py
+│  │     ├─ media_repo.py
+│  │     └─ audit_repo.py
+│  └─ mcp_server/
+│     ├─ tools/
+│     ├─ resources/
+│     └─ prompts/
+├─ skills/
+│  ├─ scene_query/
+│  │  └─ SKILL.md
+│  ├─ history_query/
+│  │  └─ SKILL.md
+│  ├─ last_seen/
+│  │  └─ SKILL.md
+│  ├─ object_state/
+│  │  └─ SKILL.md
+│  ├─ zone_state/
+│  │  └─ SKILL.md
+│  ├─ ocr_query/
+│  │  └─ SKILL.md
+│  └─ device_status/
+│     └─ SKILL.md
+├─ tests/
+│  ├─ unit/
+│  ├─ integration/
+│  └─ e2e/
+└─ scripts/
+   ├─ start_gateway.sh
+   ├─ start_backend.sh
+   ├─ start_edge.sh
+   ├─ init_db.sh
+   └─ smoke_test.sh
+```
+
+---
+
+## 二十二、Telegram 用户交互设计
+
+Telegram 是本项目的正式入口，因此交互设计不能只停留在“能收发消息”，而要有**明确的产品交互语义**。Telegram Bot API 是 HTTP 接口；更新处理可用 `getUpdates` 或 `setWebhook`；同时官方支持 `sendChatAction`、图片、视频、文档、语音等多种消息类型。([Telegram][2])
+
+### 22.1 交互类型
+
+正式支持 4 类用户输入：
+
+1. **自然语言文本**
+2. **图片上传**
+3. **短视频上传**
+4. **命令式指令**
+
+### 22.2 文本交互规范
+
+自然语言文本是第一入口，示例包括：
+
+* 现在门口是什么情况
+* 杯子最后一次在哪看到
+* 客厅现在像不像有人
+* 读一下这张图上的字
+* 给我发最近 10 秒门口画面
+
+Telegram 文本单条上限为 4096 字符，所以系统必须内建：
+
+* 自动分片回复
+* 摘要优先
+* 大段 debug 信息折叠或转附件
+* 大结果优先回摘要，再补细节
+
+这些是正式产品要求，不是工程补丁。([Telegram][2])
+
+### 22.3 命令式交互规范
+
+为方便稳定操作，系统同时提供固定命令入口：
+
+* `/snapshot door`
+* `/clip living_room 10`
+* `/lastseen cup`
+* `/state desk`
+* `/ocr`
+* `/device`
+* `/help`
+
+命令的作用不是替代自然语言，而是给调试、验收和低歧义操作提供快速入口。
+
+### 22.4 处理过程反馈
+
+任何超过 2 秒的请求，都必须发送 `sendChatAction` 类型反馈，例如：
+
+* `typing`
+* `upload_photo`
+* `record_video`
+
+Telegram 官方提供该接口就是为了表达“机器人正在处理”；视觉任务和工具调用天然可能比纯文本回复更慢，所以这是正式交互规范的一部分。([Telegram][2])
+
+---
+
+## 二十三、完整消息流设计
+
+### 23.1 用户查询当前状态
+
+标准链路：
+
+1. 用户在 Telegram 发出自然语言问题
+2. nanobot 接收消息
+3. Qwen3.5 解析意图
+4. Skill 选择执行模板
+5. 若需事实查询，则调用 MCP tool
+6. tool 访问 state / memory / policy 服务
+7. 返回结构化结果
+8. Qwen3.5 整合结果生成自然语言回答
+9. nanobot 将回答发回 Telegram
+
+这条链路完全符合 Qwen Function Calling 的官方模式：应用先传工具清单，模型判断是否需要工具；若需要则返回 JSON 工具调用指令；应用执行工具，再把结果追加到 messages 中，由模型生成最终自然语言结果。([阿里云帮助中心][3])
+
+### 23.2 用户请求拍照或视频
+
+1. 用户发出“现在拍一张门口”
+2. 模型选择 `take_snapshot`
+3. MCP tool 转发到 device_service
+4. device_service 向 RK3566 下发命令
+5. 前端返回 snapshot URI
+6. nanobot 回传图片到 Telegram
+7. 若用户继续追问“图里写了什么”，则模型可直接看图，或触发 OCR tool
+
+### 23.3 前端事件主动上报
+
+1. RK3566 发现目标进入区域
+2. event_compressor 生成事件
+3. perception_service 接收并验签
+4. 写入 observation
+5. 判断是否升级为 event
+6. state_service 刷新 object_state / zone_state
+7. 若命中通知规则，则经 nanobot 主动发 Telegram 提醒
+
+### 23.4 OCR 查询流
+
+1. 用户上传图片或要求读取已拍照片
+2. Qwen3.5 先判断是否可直接完成简单 OCR
+3. 若是结构化提取或高价值内容，则调用 `ocr_extract_fields`
+4. OCR 服务返回文本、框、置信度和字段
+5. 若结果需记忆化，则写入 observation/event
+6. 最终由 Qwen3.5 生成用户可读回复
+
+---
+
+## 二十四、Skill 运行策略
+
+Skill 不承担底层事实存储，而承担“**如何解决某类问题**”的标准流程。Qwen 的工具调用机制说明了工具调用是一个多轮应用交互过程，因此 Skill 最适合承载“哪个问题先查哪个工具、何时回退、何时直接回答”的策略。([阿里云帮助中心][3])
+
+### 24.1 scene_query_skill
+
+适用问题：
+
+* 现在看到什么
+* 这张图里有什么
+* 门口现在什么情况
+
+默认步骤：
+
+1. 若用户上传图片，则优先模型直接看图
+2. 若无图片且请求实时画面，则 `take_snapshot`
+3. 若已有最新 snapshot，可直接 `describe_scene`
+4. 输出当前观察摘要
+5. 若用户追问文字内容，再触发 OCR 分支
+
+### 24.2 history_query_skill
+
+适用问题：
+
+* 最近发生了什么
+* 今天下午有没有人来过
+
+默认步骤：
+
+1. 解析时间范围
+2. 调 `query_recent_events`
+3. 需要时补 `get_zone_state` 作为当前摘要
+4. 输出时间序列概览
+
+### 24.3 last_seen_skill
+
+适用问题：
+
+* 某物最后在哪看到
+* 最后一次看到快递是什么时候
+
+默认步骤：
+
+1. 调 `last_seen_object`
+2. 若记录 stale，则补 `evaluate_staleness`
+3. 若问题本身要求实时，则建议拍照回查
+
+### 24.4 object_state_skill
+
+适用问题：
+
+* 杯子现在还在吗
+* 快递现在还在门口吗
+
+默认步骤：
+
+1. `get_object_state`
+2. `evaluate_staleness`
+3. 若 stale 且问题要求高实时性，则 `take_snapshot`
+4. 返回“当前推定 + 证据时效 + 可信度”
+
+### 24.5 ocr_query_skill
+
+适用问题：
+
+* 读图中文字
+* 提取编号 / 名称 / 标签
+
+默认步骤：
+
+1. 简单短文本优先模型直接 OCR
+2. 字段提取优先 `ocr_extract_fields`
+3. 如需入库则写 observation/event
+4. 返回文本和结构化结果摘要
+
+---
+
+## 二十五、MCP Server 设计细则
+
+MCP 的正式意义，是给 nanobot 和模型一个**稳定、可发现、可治理**的能力边界。MCP 规范明确把 Tools 设计为模型可自动发现并调用的外部操作，把 Prompts 设计为可复用模板，把 Resources 设计为上下文资源。([Model Context Protocol][4])
+
+### 25.1 MCP Server 划分
+
+建议至少分成 4 类 server：
+
+1. **vision-mcp**
+
+   * `take_snapshot`
+   * `get_recent_clip`
+   * `describe_scene`
+
+2. **memory-mcp**
+
+   * `query_recent_events`
+   * `last_seen_object`
+
+3. **state-policy-mcp**
+
+   * `get_object_state`
+   * `get_zone_state`
+   * `get_world_state`
+   * `evaluate_staleness`
+
+4. **ocr-device-mcp**
+
+   * `ocr_quick_read`
+   * `ocr_extract_fields`
+   * `device_status`
+   * `refresh_object_state`
+
+### 25.2 MCP 返回规范
+
+所有 tool 返回统一 JSON 结构：
+
+```json
+{
+  "ok": true,
+  "summary": "string",
+  "data": {},
+  "meta": {
+    "source_layer": "observation|event|state|policy|device|ocr",
+    "confidence": 0.0,
+    "fresh_until": "2026-03-13T10:00:00Z",
+    "is_stale": false,
+    "fallback_required": false,
+    "trace_id": "..."
+  }
+}
+```
+
+这样做的原因是：模型整合工具结果时，最需要的是**稳定 schema**，而不是每个工具各说各话。
+
+### 25.3 MCP 安全规则
+
+Tools 应在实现层加入：
+
+* 参数白名单
+* 路径白名单
+* 最大媒体尺寸
+* 最大 clip 时长
+* 超时控制
+* trace_id 与审计日志
+
+MCP tools 规范对安全的要求很明确：工具调用不应被当作无风险文本生成，系统应该保留人工与宿主的治理能力。([Model Context Protocol][5])
+
+---
+
+## 二十六、nanobot 配置策略
+
+nanobot 当前 README 已给出 Telegram 接入的核心配置模式，包括：
+
+* `channels.telegram.enabled`
+* `token`
+* `allowFrom`
+* `tools.mcpServers`
+* workspace 与运行时目录组织
+
+README 还明确指出 Telegram 推荐只需 token 即可快速接入，同时可通过 `allowFrom` 限制允许访问的 Telegram 用户 ID。([GitHub][1])
+
+建议正式配置策略如下：
+
+### 26.1 正式实例
+
+* `nanobot-prod`
+* 连接正式 Telegram Bot
+* 指向正式 workspace
+* 挂正式 MCP servers
+* allowFrom 只允许正式用户 ID
+
+### 26.2 测试实例
+
+* `nanobot-dev`
+* 连接测试 Telegram Bot
+* 指向测试 workspace
+* 挂测试 MCP servers
+* allowFrom 只允许开发者 ID
+
+### 26.3 配置原则
+
+* 不把业务逻辑写入 nanobot fork
+* 不改 nanobot 核心 channel 代码
+* 所有业务扩展优先经 MCP 暴露
+* Skill 与配置分离
+* 正式与测试实例彻底隔离
+
+---
+
+## 二十七、前端设备协议
+
+虽然 Telegram 和 nanobot 是用户侧重点，但前端设备协议必须在项目书里钉死，否则后续无法稳定验收。
+
+### 27.1 设备上报事件 envelope
+
+建议正式协议字段：
+
+* `event_id`
+* `schema_version`
+* `device_id`
+* `camera_id`
+* `seq_no`
+* `captured_at`
+* `sent_at`
+* `event_type`
+* `zone_id`
+* `objects[]`
+* `snapshot_uri`
+* `clip_uri`
+* `model_version`
+* `compress_reason`
+* `signature`
+
+### 27.2 设备健康上报字段
+
+* `device_id`
+* `online`
+* `temperature`
+* `cpu_load`
+* `npu_load`
+* `free_mem_mb`
+* `camera_fps`
+* `last_capture_ok`
+* `last_upload_ok`
+
+### 27.3 设备命令集
+
+* `take_snapshot`
+* `get_recent_clip`
+* `ping`
+* `refresh_detection_once`
+
+这组命令已经足够支撑完整产品体验，不需要在首版就引入复杂双向控制。
+
+---
+
+## 二十八、状态模型与推理原则
+
+### 28.1 object_state
+
+用于回答“物体现在大概率还在不在”。
+
+字段建议：
+
+* `object_name`
+* `camera_id`
+* `zone_id`
+* `state_value`：`present | absent | unknown`
+* `state_confidence`
+* `observed_at`
+* `fresh_until`
+* `is_stale`
+* `summary`
+* `evidence_count`
+* `last_confirmed_at`
+* `last_changed_at`
+
+### 28.2 zone_state
+
+用于回答“区域当前像不像有人/有物”。
+
+字段建议：
+
+* `zone_id`
+* `camera_id`
+* `state_value`：`occupied | empty | likely_occupied | unknown`
+* `state_confidence`
+* `observed_at`
+* `fresh_until`
+* `is_stale`
+* `summary`
+
+### 28.3 world_state
+
+在本项目里只作为**聚合摘要视图**，不做重图谱化。
+它由 object_state、zone_state、device_status 汇总得到，用于回答：
+
+* 整体空间当前情况如何
+* 哪些信息已过时
+* 哪些区域值得回查
+
+### 28.4 freshness 判定原则
+
+* 每类对象 / 区域有独立 freshness window
+* `now > fresh_until` 则 stale
+* 设备离线超过阈值可直接触发 stale
+* stale 不等于无效，但必须改变回复措辞
+* 高实时问题触发 fallback
+
+---
+
+## 二十九、OCR 策略正式版
+
+这一版不再把 OCR 作为后续增强，而是作为正式能力写入。
+
+### 29.1 模型 OCR
+
+Qwen 官方视觉文档明确写到“文字识别与信息抽取”和“结构化输出”能力，因此**简单 OCR、短文本读取、图中局部文字理解**可直接交给 Qwen3.5 多模态模型。([阿里云帮助中心][3])
+
+适用：
+
+* 纸条
+* 门牌
+* 简单标签
+* 局部屏幕文本
+* 用户上传的单张图像问答
+
+### 29.2 工具 OCR
+
+对于以下情况必须优先用工具：
+
+* 长文本
+* 多字段抽取
+* 票据/快递单类结构化内容
+* 需要保存为 observation/event 的关键信息
+
+如果你后续决定用专门 OCR 服务，这条通道可接 PaddleOCR 或其他 OCR 服务，但对计划书来说，正式要求是：**系统必须同时具备“模型 OCR”和“工具 OCR”两条通道**。这一点不会影响 nanobot 的上游兼容性，因为它仍然只是通过 MCP 调工具。([GitHub][1])
+
+---
+
+## 三十、测试与验收扩展版
+
+### 30.1 Telegram 验收
+
+必须验证：
+
+* polling 正常收消息
+* 大文本自动分片
+* 图片可上传并被模型处理
+* 视频可回传
+* `sendChatAction` 在长任务中正常显示
+* 未授权用户被拒绝
+
+Telegram 的接口能力和消息限制都已在官方文档中定义清楚，所以这部分必须做成正式验收项，而不是“体验优化”。([Telegram][2])
+
+### 30.2 nanobot 验收
+
+必须验证：
+
+* Telegram channel 能稳定接入
+* `allowFrom` 生效
+* `tools.mcpServers` 可正确挂载
+* Skill 能参与运行
+* 正式实例与测试实例互不污染
+
+### 30.3 工具链验收
+
+必须验证：
+
+* MCP tools 可被发现
+* MCP tools 可被调用
+* 工具失败时模型能给出失败说明
+* 工具返回结果可被模型整合
+* trace_id 可全链路追踪
+
+### 30.4 前端验收
+
+必须验证：
+
+* 设备在线离线识别
+* 事件上报可落 observation
+* `take_snapshot` 成功率
+* `get_recent_clip` 成功率
+* 状态刷新正确
+* OCR 候选图可正常传回后端
+
+### 30.5 状态层验收
+
+必须验证：
+
+* last_seen 优先查 state，再回退 observation
+* stale 正确触发
+* zone_state 可输出占用/空/未知
+* object_state 可输出 present/absent/unknown
+* 高实时问题可触发 fallback
+
+---
+
+## 三十一、研发顺序与交付节奏
+
+虽然这是完整产品计划书，但工程上仍然需要正确顺序。正确顺序不是“哪个模块看起来重要先写哪个”，而是：
+
+### 阶段 1：入口打通
+
+* Telegram Bot
+* nanobot 接入
+* Qwen3.5 模型联通
+* 基础 Skill
+* 基础 MCP
+
+### 阶段 2：前端感知打通
+
+* RK3566 采集
+* detection / tracking / event
+* heartbeat
+* snapshot / clip
+
+### 阶段 3：事实层打通
+
+* observation
+* events
+* state
+* policy
+* device
+
+### 阶段 4：OCR 与完整交互
+
+* 模型 OCR
+* 工具 OCR
+* Telegram 多轮问答
+* structured output
+* 审计与权限
+
+### 阶段 5：完整验收
+
+* e2e
+* 回归
+* 稳定性
+* 正式部署文档
+* AGENTS.md 与开发命令
+
+这不是把 Telegram、OCR、MCP 往后拖，而是**按依赖顺序实现完整功能**。
+
+---
+
+## 三十二、最终补充结论
+
+到这里，这份“最终版完整产品计划书”已经可以被视为一个**可以直接拆解为研发任务、接口文档、测试计划和交付标准**的总纲。
+
+它现在的核心特征非常明确：
+
+* **Telegram 是正式入口，不是临时入口**。官方 Bot API 足以支撑文本、媒体、长任务反馈和更新处理。([Telegram][2])
+* **nanobot 是正式宿主，不是可随意改造的业务底座**。它适合承载 Telegram、MCP、Skill 和模型运行，而不适合承载你的业务真相层。([GitHub][1])
+* **Qwen3.5 多模态模型负责理解、简单 OCR 和工具决策，不替代状态/记忆/策略系统**。这与官方 Function Calling 与视觉能力说明一致。([阿里云帮助中心][3])
+* **RK3566 单目前端是正式边缘感知层，但职责必须被限制在检测、跟踪、事件、缓存和设备状态范围内**。([GitHub][1])
+* **MCP/Skill 是完整产品的一部分，不是附加功能**。MCP 提供标准能力面，Skill 提供执行模板，二者共同保证系统可扩展又不侵入 nanobot 核心。([Model Context Protocol][4])
+
+接下来最合适的动作，就是我把以上上下两部分**整理成一份完全成型的正式文档版**，用统一章节编号、正式措辞、可复制到 Markdown 文件里的格式一次性输出。
+
+---
+
+（附录：数据库详细设计、示例 SQL 查询、迁移脚本等可参考后续技术规格文档，此处从略。）
+
+---
+
+以上即为最终版产品计划书 v1.0 的完整内容。

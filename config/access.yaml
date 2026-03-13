@@ -1,0 +1,68 @@
+default_role: viewer
+
+roles:
+  owner:
+    can_view_all: true
+    can_manage_policy: true
+    can_manage_access: true
+    can_trigger_device_action: true
+  viewer:
+    can_view_all: true
+    can_manage_policy: false
+    can_manage_access: false
+    can_trigger_device_action: false
+
+telegram_allowlist:
+  user_ids:
+    - "__SET_TELEGRAM_USER_ID__"
+
+device_allowlist:
+  device_ids:
+    - rk3566-dev-01
+
+user_roles:
+  "__SET_TELEGRAM_USER_ID__": owner
+
+mcp_tool_allowlist:
+  - get_world_state
+  - query_recent_events
+  - get_object_state
+  - get_zone_state
+  - take_snapshot
+  - get_recent_clip
+  - ocr_quick_read
+  - device_status
+
+tool_allowlist_per_skill:
+  telegram:
+    - take_snapshot
+    - get_recent_clip
+    - last_seen_object
+    - get_object_state
+    - get_world_state
+    - query_recent_events
+    - ocr_quick_read
+    - device_status
+  mcp_console:
+    - "*"
+
+resource_scope_per_skill:
+  telegram:
+    - resource://memory/events
+    - resource://devices/status
+  mcp_console:
+    - "*"
+
+media_visibility_scope:
+  owner:
+    - private
+    - internal
+    - public
+  viewer:
+    - internal
+    - public
+
+sensitive_actions:
+  - change_policy
+  - change_access
+  - delete_media

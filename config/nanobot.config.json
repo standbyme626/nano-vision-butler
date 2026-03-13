@@ -1,0 +1,47 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "./gateway/nanobot_workspace/prod",
+      "model": "__SET_QWEN_MODEL_NAME__",
+      "provider": "qwen_openai_compat"
+    }
+  },
+  "channels": {
+    "sendProgress": true,
+    "sendToolHints": false,
+    "telegram": {
+      "enabled": true,
+      "token": "__SET_TELEGRAM_BOT_TOKEN__",
+      "allowFrom": [
+        "__SET_TELEGRAM_USER_ID__"
+      ],
+      "replyToMessage": true
+    }
+  },
+  "providers": {
+    "qwen_openai_compat": {
+      "apiBase": "__SET_QWEN_API_BASE__",
+      "apiKey": "__SET_QWEN_API_KEY__"
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "runtime": {
+    "dataDir": "./gateway/runtime/prod",
+    "logsDir": "./gateway/runtime/prod/logs",
+    "tempDir": "./gateway/runtime/prod/tmp"
+  },
+  "tools": {
+    "restrictToWorkspace": false,
+    "defaultToolTimeoutSec": 60,
+    "maxConcurrentTools": 4,
+    "mcpServers": {
+      "vision-butler-mcp": {
+        "url": "http://127.0.0.1:8001/mcp",
+        "toolTimeout": 60
+      }
+    }
+  }
+}

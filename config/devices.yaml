@@ -1,0 +1,17 @@
+devices:
+  - device_id: rk3566-dev-01
+    camera_id: cam-entry-01
+    device_name: rk3566-front
+    auth:
+      api_key: "__SET_DEVICE_API_KEY__"
+    heartbeat:
+      interval_sec: 15
+      offline_after_sec: 90
+    upload:
+      snapshot_dir: "./data/media/snapshots"
+      clip_dir: "./data/media/clips"
+    capabilities:
+      - snapshot
+      - short_clip
+      - object_detect
+      - ocr
