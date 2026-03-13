@@ -446,6 +446,193 @@
 
 ---
 
+## T13A 板级 bring-up 与基线测量
+状态：TODO
+优先级：P1
+依赖：T13
+
+### 目标
+在真实 RK3566 板端建立可复现的采集与负载基线，作为后续模型与媒体链路的前置条件。
+
+### 输出
+- docs/edge/baseline_report.md
+- scripts/edge_baseline_capture.sh
+- scripts/edge_baseline_metrics.sh
+
+### 验收
+- 摄像头节点可稳定枚举
+- 分辨率/FPS/像素格式基线可复现
+- 连续 30-60 分钟采集无崩溃/无持续掉流
+- CPU/内存/NPU（若可读）指标有基线记录
+
+---
+
+## T13B 前端协议冻结（event/heartbeat/command）
+状态：TODO
+优先级：P1
+依赖：T13A
+
+### 目标
+冻结 edge -> backend 协议，避免后续实现阶段反复改字段。
+
+### 输出
+- docs/edge/protocol.md
+- schemas/edge_event_envelope.schema.json
+- schemas/edge_heartbeat.schema.json
+- schemas/edge_command_response.schema.json
+
+### 验收
+- event/heartbeat/command response 字段与计划书一致
+- 示例 payload 可通过 schema 校验
+- 后端入站校验可识别 schema_version 与关键必填字段
+
+---
+
+## T13C 真实采集层替换（V4L2/GStreamer）
+状态：TODO
+优先级：P1
+依赖：T13B
+
+### 目标
+以真实采集管线替换 StubCamera，实现可恢复的板端采图能力。
+
+### 输出
+- edge_device/capture/camera.py（真实实现）
+- edge_device/capture/v4l2_camera.py（或 gstreamer_camera.py）
+- tests/unit/test_edge_capture.py
+
+### 验收
+- 支持 source/fps/resolution/pixel_format 配置
+- 采集失败可重试并输出可观测错误
+- 连续采集稳定运行
+
+---
+
+## T13D 真实 Snapshot 落地（JPEG）
+状态：TODO
+优先级：P1
+依赖：T13C
+
+### 目标
+把占位 snapshot 文件替换为真实 JPEG，先打通“可验图”的最短路径。
+
+### 输出
+- edge_device/api/server.py（_store_snapshot 真实编码）
+- tests/integration/test_edge_snapshot_real_media.py
+- docs/edge/snapshot_contract.md
+
+### 验收
+- snapshot 文件为真实 JPEG，可被标准图像工具读取
+- 宽高与实际帧一致
+- snapshot URI 回传后端并可落库索引
+
+---
+
+## T13E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
+状态：TODO
+优先级：P1
+依赖：T13D
+
+### 目标
+让 /device/command/take-snapshot 与 /device/command/get-recent-clip 触发真实 edge 执行器，而非后端 stub。
+
+### 输出
+- src/services/device_service.py（接入真实 edge command client）
+- src/services/edge_command_client.py
+- tests/integration/test_device_command_edge_bridge.py
+
+### 验收
+- 后端命令可远程触发 edge 执行
+- command_id/trace_id 可全链路追踪
+- 不再依赖 StubEdgeDeviceAdapter 生成媒体结果
+
+---
+
+## T13F RKNN 检测模型部署（主检测）
+状态：TODO
+优先级：P1
+依赖：T13E
+
+### 目标
+接入 RKNN 主检测模型，替换 LightweightDetector stub。
+
+### 输出
+- edge_device/inference/rknn_detector.py
+- scripts/rknn/export_to_rknn.sh
+- scripts/rknn/run_infer_benchmark.sh
+- docs/edge/model_deploy.md
+
+### 验收
+- 板端可输出真实 bbox/class/confidence
+- model_version 与实际模型一致
+- 推理失败可降级并记录错误
+
+---
+
+## T13G 跟踪/Zone/事件压缩质量提升
+状态：TODO
+优先级：P1
+依赖：T13F
+
+### 目标
+提升 event 质量与稳定性，减少抖动和无效上报。
+
+### 输出
+- edge_device/tracking/tracker.py（真实策略）
+- edge_device/compression/event_compressor.py（策略增强）
+- tests/integration/test_edge_event_quality.py
+
+### 验收
+- track_id 在连续帧下稳定
+- zone_id 映射正确
+- event 压缩策略可配置（阈值/去重/节流）
+
+---
+
+## T13H Recent Clip 真实化（MP4 + ring buffer）
+状态：TODO
+优先级：P1
+依赖：T13G
+
+### 目标
+产出真实可播放 clip，并与 ring buffer 策略协同。
+
+### 输出
+- edge_device/api/server.py（_assemble_clip 真实编码）
+- edge_device/cache/ring_buffer.py（策略增强）
+- tests/integration/test_edge_recent_clip_real_media.py
+
+### 验收
+- clip 为真实 MP4，可播放
+- 片段长度与请求时长匹配
+- 缓存淘汰策略可观测、可复现
+
+---
+
+## T13I 可靠性/安全/压测验收
+状态：TODO
+优先级：P1
+依赖：T13H
+
+### 目标
+固化回压与退化策略，完成可交付级稳定性与安全验收。
+
+### 输出
+- docs/edge/reliability_plan.md
+- docs/edge/soak_test_report.md
+- tests/integration/test_edge_reliability_flow.py
+- scripts/edge_soak_test.sh
+
+### 验收
+- take_snapshot 成功率 >= 99%，P95 响应时间有明确阈值
+- get_recent_clip 成功率 >= 98%，P95 生成时长有明确阈值
+- event captured_at 到后端入库 P95 延迟有明确阈值
+- heartbeat 连续 24h 无误报抖动
+- 至少一次断网恢复演练通过并可补传关键事件
+- 回压/退化策略生效：优先保 heartbeat 与关键事件
+
+---
+
 ## T14 安全与访问控制落地
 状态：DONE
 优先级：P1
@@ -535,7 +722,15 @@
 - T14
 
 ### D 线：边缘层
-- T13
+- T13A
+- T13B
+- T13C
+- T13D
+- T13E
+- T13F
+- T13G
+- T13H
+- T13I
 
 ### 收尾线：测试与验收
 - T15
