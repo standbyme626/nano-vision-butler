@@ -43,6 +43,78 @@ if [[ ! -f "${NANOBOT_CONFIG}" ]]; then
   exit 1
 fi
 
+ensure_single_gateway_per_telegram_token() {
+  local config_path="$1"
+  python3 - "$config_path" <<'PY'
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1]).resolve()
+
+
+def read_telegram_token(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return None
+    telegram = channels.get("telegram")
+    if not isinstance(telegram, dict):
+        return None
+    if telegram.get("enabled") is False:
+        return None
+    token = telegram.get("token")
+    if not isinstance(token, str):
+        return None
+    token = token.strip()
+    return token or None
+
+
+token = read_telegram_token(config_path)
+if not token:
+    raise SystemExit(0)
+
+result = subprocess.run(["pgrep", "-af", "nanobot.*gateway"], capture_output=True, text=True)
+if result.returncode not in {0, 1}:
+    raise SystemExit(0)
+
+duplicates: list[tuple[str, str]] = []
+for line in result.stdout.splitlines():
+    match = re.match(r"^\s*(\d+)\s+(.*)$", line)
+    if not match:
+        continue
+    pid, cmd = match.group(1), match.group(2)
+    cfg_match = re.search(r"--config\s+(\S+)", cmd)
+    if not cfg_match:
+        continue
+    candidate_path = Path(cfg_match.group(1)).resolve()
+    if candidate_path == config_path:
+        duplicates.append((pid, str(candidate_path)))
+        continue
+    if read_telegram_token(candidate_path) == token:
+        duplicates.append((pid, str(candidate_path)))
+
+if duplicates:
+    print("[ERROR] Duplicate Telegram token consumer detected.", file=sys.stderr)
+    for pid, path in duplicates:
+        print(f"[ERROR] running gateway pid={pid} config={path}", file=sys.stderr)
+    print(
+        "[HINT] Stop the other gateway or use a different TELEGRAM_BOT_TOKEN(_DEV).",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+PY
+}
+
 echo "[INFO] Starting nanobot gateway"
 echo "[INFO] Instance       : ${NANOBOT_INSTANCE}"
 echo "[INFO] Config         : ${NANOBOT_CONFIG}"
@@ -114,6 +186,7 @@ PY
 )"
 
 echo "[INFO] Effective cfg  : ${NANOBOT_EFFECTIVE_CONFIG}"
+ensure_single_gateway_per_telegram_token "${NANOBOT_EFFECTIVE_CONFIG}"
 
 # nanobot CLI compatibility:
 # - new style: nanobot gateway --config <file> --workspace <dir>

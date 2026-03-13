@@ -336,6 +336,26 @@
 
 ---
 
+## T12-Hotfix Telegram 重复消费防护
+状态：DONE
+优先级：P1
+依赖：T12
+
+### 目标
+避免同一个 Telegram bot token 被多 gateway 进程同时消费，导致会话重复执行与重复回复。
+
+### 输出
+- `scripts/start_gateway.sh` 增加“同 token 单实例”启动前检查
+- `scripts/apply_runtime_config.sh` 的 dev token 回退逻辑改为独立默认值
+- `README.md` 增加重复回复排查说明
+
+### 验收
+- 当已有 gateway 使用同 token 运行时，第二个 gateway 启动会被拒绝
+- `TELEGRAM_BOT_TOKEN_DEV` 缺省时不再自动复用 `TELEGRAM_BOT_TOKEN`
+- 相关集成测试不回归
+
+---
+
 ## T13 RK3566 前端最小正式实现
 状态：DONE
 优先级：P2

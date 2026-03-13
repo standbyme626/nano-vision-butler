@@ -34,9 +34,7 @@ replacements = {
     "__SET_TELEGRAM_USER_ID__": required("TELEGRAM_USER_ID", strict, "42"),
     "__SET_TELEGRAM_USER_ID_DEV__": required("TELEGRAM_USER_ID_DEV", strict, required("TELEGRAM_USER_ID", strict, "42")),
     "__SET_TELEGRAM_BOT_TOKEN__": required("TELEGRAM_BOT_TOKEN", strict, "DUMMY_TELEGRAM_BOT_TOKEN"),
-    "__SET_TELEGRAM_BOT_TOKEN_DEV__": required(
-        "TELEGRAM_BOT_TOKEN_DEV", strict, required("TELEGRAM_BOT_TOKEN", strict, "DUMMY_TELEGRAM_BOT_TOKEN")
-    ),
+    "__SET_TELEGRAM_BOT_TOKEN_DEV__": required("TELEGRAM_BOT_TOKEN_DEV", strict, "DUMMY_TELEGRAM_BOT_TOKEN_DEV"),
     "__SET_TELEGRAM_WEBHOOK_URL__": required("TELEGRAM_WEBHOOK_URL", strict, "http://127.0.0.1:18790/telegram/webhook"),
     "__SET_QWEN_MODEL_NAME__": required("QWEN_MODEL_NAME", strict, "qwen2.5-vl-72b-instruct"),
     "__SET_QWEN_MODEL_NAME_DEV__": required("QWEN_MODEL_NAME_DEV", strict, required("QWEN_MODEL_NAME", strict, "qwen2.5-vl-72b-instruct")),

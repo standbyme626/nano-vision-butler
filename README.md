@@ -43,6 +43,11 @@
 - 查看日志：`./scripts/stack_ctl.sh logs gateway`
 - 停止全部：`./scripts/stack_ctl.sh stop`
 
+## Telegram 重复回复排查
+- 同一个 bot token 只能有一个 gateway 进程消费消息；若 `prod/dev` 共用 token，容易出现会话被重复执行。
+- 建议 `TELEGRAM_BOT_TOKEN_DEV` 与 `TELEGRAM_BOT_TOKEN` 使用不同 token。
+- 若出现整段重复，先执行：`./scripts/stack_ctl.sh stop && pkill -f "nanobot.*gateway" || true`，再只启动一个实例。
+
 ## Ollama 上下文档位
 - 默认模型：`qwen3.5:4b-32k`（远端 Ollama）
 - 切回阿里百炼：`./scripts/switch_ollama_ctx.sh dashscope --restart`
@@ -58,4 +63,3 @@
 - 真实 Telegram bot token/网络通道、nanobot 真实进程挂载、边缘设备级进程托管为环境适配项，不在仓库内强绑定。
 
 更多交付明细见：`docs/DELIVERY_CHECKLIST.md` 与 `docs/DEPLOYMENT.md`。
-# -home-kkk-Project-nano-vision-butler

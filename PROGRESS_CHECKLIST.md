@@ -16,6 +16,7 @@
 - [x] Prompt10 实现 Skill 层
 - [x] Prompt11 nanobot 集成与正式宿主配置
 - [x] Prompt11B Telegram 正式交互链路（补充）
+- [x] Prompt11B-Hotfix Telegram 重复消费防护（单 token 单实例）
 - [x] Prompt12 RK3566 前端最小正式实现
 - [x] Prompt13 安全与访问控制落地
 - [x] Prompt14 测试矩阵落地
@@ -35,6 +36,7 @@
 - [x] T10 Skill 层
 - [x] T11 nanobot 集成
 - [x] T12 Telegram 正式交互链路
+- [x] T12-Hotfix Telegram 重复消费防护（单 token 单实例）
 - [x] T13 RK3566 前端最小正式实现
 - [x] T14 安全与访问控制落地
 - [x] T15 测试矩阵落地
