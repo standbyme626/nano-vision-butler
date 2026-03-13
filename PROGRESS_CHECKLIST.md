@@ -11,7 +11,7 @@
 - [x] Prompt05 实现 memory/perception 服务
 - [x] Prompt06 实现 state/policy 服务
 - [x] Prompt07 实现 device 服务与媒体链路
-- [x] Prompt07-Hotfix 摄像头可用性修复（SQLite 线程 + runtime 流地址 + edge 默认后端）
+- [x] Prompt07-Hotfix 摄像头可用性修复（SQLite 线程 + runtime 流地址 + edge 默认后端，2026-03-14 本地复验通过）
 - [x] Prompt08 实现 OCR 双通道
 - [x] Prompt09 实现 MCP Server 层
 - [x] Prompt10 实现 Skill 层
@@ -34,7 +34,7 @@
 - [x] T5 memory_service 与 perception_service
 - [x] T6 state_service 与 policy_service
 - [x] T7 device_service 与媒体链路
-- [x] T7-Hotfix 摄像头可用性修复（SQLite 线程 + runtime 流地址 + edge 默认后端）
+- [x] T7-Hotfix 摄像头可用性修复（SQLite 线程 + runtime 流地址 + edge 默认后端，2026-03-14 本地复验通过）
 - [x] T8 OCR 双通道
 - [x] T9 MCP Server 层
 - [x] T10 Skill 层
