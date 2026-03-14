@@ -590,7 +590,7 @@
 ---
 
 ## T13H Recent Clip 真实化（MP4 + ring buffer）
-状态：TODO
+状态：DONE（2026-03-14）
 优先级：P1
 依赖：T13G
 

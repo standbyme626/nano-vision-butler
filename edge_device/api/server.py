@@ -197,6 +197,7 @@ class EdgeDeviceRuntime:
                 "duration_sec": clip.duration_sec,
                 "clip_uri": clip.uri,
                 "clip_path": clip.path,
+                "cache_metrics": self.cache.cache_metrics(),
             },
             "meta": {
                 "trace_id": trace_id,
@@ -288,24 +289,133 @@ class EdgeDeviceRuntime:
         timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         file_name = f"{self.config.camera_id}_clip_{duration}s_{timestamp}.mp4"
         output = self.config.clip_dir / file_name
-        output.write_text(
-            (
-                "stub clip placeholder\n"
-                f"source_snapshot={latest_snapshot.snapshot_id}\n"
-                f"duration_sec={duration}\n"
-            ),
-            encoding="utf-8",
-        )
 
+        clip_fps = min(max(int(self.config.capture_fps), 2), 12)
+        frame_count = max(duration * clip_fps, 1)
+        source_snapshots = self.cache.recent_snapshots(limit=max(frame_count, 1))
+        if not source_snapshots:
+            source_snapshots = [latest_snapshot]
+
+        self._write_clip_mp4(
+            output=output,
+            snapshots=source_snapshots,
+            frame_count=frame_count,
+            fps=clip_fps,
+        )
+        start_at = source_snapshots[0].captured_at
+        end_at = source_snapshots[-1].captured_at if source_snapshots else utc_now_iso8601()
         return ClipItem(
             clip_id=f"clip-{uuid4().hex[:12]}",
-            start_at=latest_snapshot.captured_at,
-            end_at=utc_now_iso8601(),
+            start_at=start_at,
+            end_at=end_at,
             duration_sec=duration,
             path=str(output),
             uri=f"file://{output.resolve()}",
-            source_snapshot_id=latest_snapshot.snapshot_id,
+            source_snapshot_id=source_snapshots[-1].snapshot_id if source_snapshots else None,
         )
+
+    def _write_clip_mp4(
+        self,
+        *,
+        output: Path,
+        snapshots: list[SnapshotItem],
+        frame_count: int,
+        fps: int,
+    ) -> None:
+        frames_bgr = self._load_clip_frames(snapshots=snapshots)
+        if not frames_bgr:
+            raise RuntimeError("No frame available for clip encoding")
+
+        first = frames_bgr[0]
+        target_h, target_w = first.shape[0], first.shape[1]
+        render_frames: list[Any] = []
+        source_total = len(frames_bgr)
+        for idx in range(max(frame_count, 1)):
+            source_idx = min((idx * source_total) // max(frame_count, 1), source_total - 1)
+            frame = frames_bgr[source_idx]
+            if frame.shape[0] != target_h or frame.shape[1] != target_w:
+                import cv2
+
+                frame = cv2.resize(frame, (target_w, target_h))
+            render_frames.append(frame)
+
+        opencv_error: Exception | None = None
+        try:
+            import cv2
+
+            writer = cv2.VideoWriter(
+                str(output),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                float(fps),
+                (target_w, target_h),
+            )
+            if not writer.isOpened():
+                raise RuntimeError("cv2.VideoWriter failed to open mp4 output")
+            try:
+                for frame in render_frames:
+                    writer.write(frame)
+            finally:
+                writer.release()
+            if output.exists() and output.stat().st_size > 0:
+                return
+            raise RuntimeError("OpenCV produced empty mp4 file")
+        except Exception as exc:
+            opencv_error = exc
+
+        try:
+            import imageio.v3 as iio
+
+            rgb_frames = [frame[:, :, ::-1] for frame in render_frames]
+            iio.imwrite(output, rgb_frames, fps=float(fps), codec="libx264")
+            if output.exists() and output.stat().st_size > 0:
+                return
+            raise RuntimeError("imageio produced empty mp4 file")
+        except Exception as imageio_exc:
+            raise RuntimeError(
+                "Failed to encode clip mp4 "
+                f"(opencv={opencv_error!r}, imageio={imageio_exc!r})"
+            ) from imageio_exc
+
+    def _load_clip_frames(self, *, snapshots: list[SnapshotItem]) -> list[Any]:
+        frames: list[Any] = []
+        for snapshot in snapshots:
+            frame = self._read_snapshot_as_bgr(Path(snapshot.path))
+            if frame is not None:
+                frames.append(frame)
+
+        if frames:
+            return frames
+
+        fallback = self._store_snapshot(self.camera.capture_latest_frame())
+        self.cache.add_snapshot(fallback)
+        fallback_frame = self._read_snapshot_as_bgr(Path(fallback.path))
+        if fallback_frame is not None:
+            frames.append(fallback_frame)
+        return frames
+
+    @staticmethod
+    def _read_snapshot_as_bgr(path: Path) -> Any | None:
+        if not path.exists():
+            return None
+        try:
+            import cv2
+
+            frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            if frame is not None:
+                return frame
+        except Exception:
+            pass
+
+        try:
+            import numpy as np
+            from PIL import Image
+
+            with Image.open(path) as image:
+                rgb = image.convert("RGB")
+                array = np.asarray(rgb)
+            return array[:, :, ::-1].copy()
+        except Exception:
+            return None
 
     def _next_event_seq_no(self) -> int:
         self._event_seq_no += 1
