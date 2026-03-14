@@ -29,6 +29,8 @@ python3 -m edge_device.api.server get-recent-clip --duration-sec 6
 - `EDGE_CAPTURE_FPS`：采集帧率
 - `EDGE_CAPTURE_PIXEL_FORMAT`：像素格式（例如 `MJPG` / `YUYV` / `NV12`）
 - `EDGE_CAPTURE_BACKEND`：`auto | v4l2 | gstreamer | ffmpeg | stub`
+- `EDGE_CAPTURE_APPLY_V4L2_TUNING`：启动时是否自动执行 `v4l2-ctl` 设定（默认 `1`）
+- `EDGE_CAPTURE_DISABLE_DYNAMIC_FRAMERATE`：是否关闭 `exposure_dynamic_framerate`（默认 `0`）
 - `EDGE_CAPTURE_RETRY_COUNT` / `EDGE_CAPTURE_RETRY_DELAY_SEC`：失败重试参数
 - `EDGE_DETECTOR_BACKEND`：`auto | rknn | lightweight`
 - `EDGE_RKNN_MODEL_PATH` / `EDGE_RKNN_MODEL_VERSION`：RKNN 模型路径与版本
@@ -95,6 +97,7 @@ python3 -m edge_device.api.server get-recent-clip --duration-sec 6
 
 ## 后续替换点（真实硬件接入）
 - 采集层已支持 `V4L2/GStreamer/FFmpeg`；通过 `EDGE_CAPTURE_*` 参数切换与调优。
+- 对 USB UVC 摄像头，`1280x720 + MJPG` 通常比 `YUYV` 更容易稳定在更高采集速率。
 - 检测默认通过 `create_detector_from_env()` 选择 backend；`rknn` 不可用时自动降级并输出 `detector_error`。
 - `LightweightTracker.assign_tracks`：替换为真实多目标跟踪器（如 ByteTrack 简化版）。
 - `_store_snapshot` 已支持真实 JPEG 编码；`_assemble_clip` 仍为占位实现，待 T13H 真实化。

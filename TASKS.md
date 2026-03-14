@@ -844,6 +844,26 @@
 
 ---
 
+## T17-Hotfix 摄像头 capture 限制解除（强制 MJPG 防回落）
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix
+
+### 目标
+消除 RK3566 实机采集链路因像素格式回落导致的低帧率瓶颈，避免 `1280x720` 在 `YUYV` 下被锁到低采集速率。
+
+### 输出
+- `scripts/start_edge.sh`（新增启动时 `v4l2-ctl` 自动调优）
+- `docs/EDGE_DEVICE.md`（新增采集调优参数说明）
+- `docs/edge/model_ab_test_matrix.md`（公共环境改为 `MJPG + 30fps`）
+
+### 验收
+- RK3566 实机 `v4l2-ctl --list-formats-ext` 可确认 `1280x720@30fps` 的 MJPG 能力
+- 启动 edge 时可自动执行 `set-fmt-video + set-parm`，日志可见调优结果
+- 实测 `capture` 从 `~200ms (YUYV@720p)` 降到 `~33ms (MJPG@720p)`
+
+---
+
 ## 推荐并行方式
 
 ### A 线：数据与事实层
