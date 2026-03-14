@@ -886,6 +886,28 @@
 
 ---
 
+## T17-Hotfix 切换 Rockchip 优化版 YOLOv8n INT8 并完成实机复测
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix 默认模型切换 YOLOv8n INT8 + 采集推理并行流水线
+
+### 目标
+将 RK3566 默认检测模型从通用导出版本切换为 `airockchip/ultralytics_yolov8 + rknn_model_zoo` 链路的优化版 `YOLOv8n INT8`，并完成 RK3566 实机跑通验证。
+
+### 输出
+- `edge_device/inference/rknn_detector.py`（默认模型改为 `yolov8n_rockchip_opt_i8_rk3566.rknn`）
+- `scripts/start_edge.sh`（默认 `EDGE_RKNN_MODEL_PATH` 切换到 Rockchip 优化模型）
+- `scripts/rknn/export_to_rknn.sh`（支持 INT8 量化、`RKNN_DATASET_PATH`、onnx 1.20 兼容补丁）
+- `tests/unit/test_rknn_detector.py`（默认路径与模型版本断言同步）
+- `docs/edge/model_deploy.md`（导出与板端基准命令切换为 Rockchip 优化模型）
+
+### 验收
+- 不传 `EDGE_RKNN_MODEL_PATH` 时默认加载 `./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn`
+- `scripts/start_edge.sh run-once` 在 RK3566 实机可成功加载并返回 `model_version=yolov8n_rockchip_opt_i8_rk3566`
+- 相关单测通过，导出脚本可执行 INT8 导出流程
+
+---
+
 ## 推荐并行方式
 
 ### A 线：数据与事实层

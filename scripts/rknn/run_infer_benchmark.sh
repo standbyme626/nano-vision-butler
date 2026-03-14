@@ -10,7 +10,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <model_rknn_path> [loops]"
-  echo "Example: $0 ./models/rknn/yolov8n_official_i8_rk3566.rknn 50"
+  echo "Example: $0 ./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn 50"
   exit 1
 fi
 
@@ -38,12 +38,27 @@ echo "[INFO] Device/Camera: ${EDGE_DEVICE_ID}/${EDGE_CAMERA_ID}"
 total_ms=0
 for ((i=1; i<=BENCH_LOOPS; i++)); do
   start_ns=$(date +%s%N)
-  output="$("${PYTHON_BIN}" -m edge_device.api.server run-once)"
+  output="$("${PYTHON_BIN}" -m edge_device.api.server run-once 2>&1)"
   end_ns=$(date +%s%N)
   elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
   total_ms=$(( total_ms + elapsed_ms ))
-  model_version="$(echo "${output}" | "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin)["data"].get("model_version"))')"
-  detector_error="$(echo "${output}" | "${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin)["data"].get("detector_error"))')"
+  parsed="$(
+    echo "${output}" | "${PYTHON_BIN}" -c 'import json,sys
+text=sys.stdin.read()
+idx=text.find("{")
+if idx < 0:
+    print("parse_failed\tparse_failed")
+    raise SystemExit(0)
+try:
+    payload,_=json.JSONDecoder().raw_decode(text[idx:])
+except Exception:
+    print("parse_failed\tparse_failed")
+    raise SystemExit(0)
+data=payload.get("data",{}) if isinstance(payload,dict) else {}
+print("{}\t{}".format(data.get("model_version"), data.get("detector_error")) )'
+  )"
+  model_version="${parsed%%$'\t'*}"
+  detector_error="${parsed#*$'\t'}"
   echo "[RUN ${i}] ${elapsed_ms} ms | model=${model_version} | detector_error=${detector_error}"
 done
 

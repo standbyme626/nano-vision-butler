@@ -13,23 +13,29 @@
 ## 环境变量
 - `EDGE_DETECTOR_BACKEND`：`auto | rknn | lightweight`（默认 `auto`）。
 - `EDGE_DETECT_MIN_CONFIDENCE`：最小置信度阈值（默认 `0.35`）。
-- `EDGE_RKNN_MODEL_PATH`：RKNN 模型路径（默认 `./models/rknn/yolov8n_official_i8_rk3566.rknn`）。
+- `EDGE_RKNN_MODEL_PATH`：RKNN 模型路径（默认 `./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn`）。
 - `EDGE_RKNN_MODEL_VERSION`：模型版本号（默认取模型文件名 stem）。
 - `EDGE_RKNN_INPUT_SIZE`：推理输入大小（例如 `640x640`）。
 - `EDGE_RKNN_LABELS`：类别列表（逗号分隔，默认 `person,package,car`）。
 
 ## 导出流程
 1. 准备 ONNX 模型。
-2. 在 PC 端执行：
+2. 准备量化样本列表（INT8 必需）：
 ```bash
-./scripts/rknn/export_to_rknn.sh ./models/onnx/yolov8n.onnx ./models/rknn/yolov8n_official_i8_rk3566.rknn rk3566
+printf "%s\n" "$(pwd)/models/onnx/yolov8n_calib_bus.jpg" > ./models/onnx/yolov8n_rockchip_dataset.txt
 ```
-3. 将 `.rknn` 文件同步到板端 `EDGE_RKNN_MODEL_PATH`。
+3. 在 PC 端执行：
+```bash
+RKNN_DO_QUANTIZATION=1 \
+RKNN_DATASET_PATH=./models/onnx/yolov8n_rockchip_dataset.txt \
+./scripts/rknn/export_to_rknn.sh ./models/onnx/yolov8n_rockchip_opt.onnx ./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn rk3566
+```
+4. 将 `.rknn` 文件同步到板端 `EDGE_RKNN_MODEL_PATH`。
 
 ## 板端基准
 ```bash
 EDGE_DETECTOR_BACKEND=rknn \
-./scripts/rknn/run_infer_benchmark.sh ./models/rknn/yolov8n_official_i8_rk3566.rknn 30
+./scripts/rknn/run_infer_benchmark.sh ./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn 30
 ```
 
 输出包含：
