@@ -38,6 +38,7 @@ class CapturedFrame:
     height: int
     source: str
     pixel_format: str = "rgb24"
+    image_path: str | None = None
 
 
 class CaptureError(RuntimeError):

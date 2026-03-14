@@ -59,10 +59,11 @@ class EdgeCaptureTests(unittest.TestCase):
         self.assertEqual(frame.width, 800)
         self.assertEqual(frame.height, 600)
         self.assertEqual(frame.pixel_format, "MJPG")
-        self.assertEqual(len(called), 1)
+        self.assertEqual(len(called), 2)
         self.assertIn("v4l2-ctl", called[0][0])
         self.assertIn("--device", called[0])
         self.assertIn("/dev/video0", called[0])
+        self.assertTrue(any(arg.startswith("--stream-to=") for arg in called[1]))
 
     def test_v4l2_camera_retries_then_recovers(self) -> None:
         attempts = {"count": 0}
@@ -86,7 +87,7 @@ class EdgeCaptureTests(unittest.TestCase):
         )
         frame = camera.capture_latest_frame()
         self.assertEqual(frame.frame_id, "frame-000001")
-        self.assertEqual(attempts["count"], 2)
+        self.assertEqual(attempts["count"], 3)
 
     def test_v4l2_camera_raises_after_retry_exhausted(self) -> None:
         def always_fail(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:

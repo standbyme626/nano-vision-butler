@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from edge_device.api.server import EdgeDeviceConfig, EdgeDeviceRuntime
+from edge_device.capture.camera import CapturedFrame
 
 
 class FakeBackendClient:
@@ -20,6 +23,14 @@ class FakeBackendClient:
     def post_heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.heartbeats.append(payload)
         return {"ok": True, "data": {"accepted": True, "type": "device_heartbeat"}}
+
+
+class SingleFrameCamera:
+    def __init__(self, frame: CapturedFrame) -> None:
+        self._frame = frame
+
+    def capture_latest_frame(self) -> CapturedFrame:
+        return self._frame
 
 
 class EdgeRuntimeUnitTests(unittest.TestCase):
@@ -103,6 +114,41 @@ class EdgeRuntimeUnitTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["data"]["command_id"], "cmd-snapshot-explicit")
         self.assertEqual(clip["data"]["command_id"], "cmd-clip-explicit")
+
+    def test_take_snapshot_prefers_real_frame_image_when_available(self) -> None:
+        root = Path(self.tmp_dir.name)
+        source_image = root / "source.jpg"
+        Image.new("RGB", (320, 180), color=(220, 40, 40)).save(source_image, format="JPEG", quality=95)
+        frame = CapturedFrame(
+            frame_id="frame-000777",
+            captured_at="2026-03-14T12:00:00+08:00",
+            width=320,
+            height=180,
+            source="/dev/video0",
+            pixel_format="MJPG",
+            image_path=str(source_image),
+        )
+        runtime = EdgeDeviceRuntime(
+            config=EdgeDeviceConfig(
+                device_id="rk3566-dev-01",
+                camera_id="cam-entry-01",
+                backend_base_url="http://127.0.0.1:8000",
+                snapshot_dir=root / "snapshots-real",
+                clip_dir=root / "clips-real",
+            ),
+            backend_client=self.backend,
+            camera=SingleFrameCamera(frame),
+        )
+
+        snapshot = runtime.take_snapshot(trace_id="trace-edge-real-snapshot")
+        snapshot_path = Path(snapshot["data"]["snapshot_path"])
+        self.assertTrue(snapshot_path.exists())
+        with Image.open(snapshot_path) as image:
+            center = image.convert("RGB").getpixel((160, 90))
+            self.assertGreater(center[0], 160)
+            self.assertLess(center[1], 120)
+            self.assertLess(center[2], 120)
+        self.assertFalse(source_image.exists(), msg="temporary captured frame artifact should be cleaned")
 
 
 if __name__ == "__main__":

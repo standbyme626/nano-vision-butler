@@ -7,7 +7,11 @@ from pathlib import Path
 
 from edge_device.capture.camera import StubCamera
 from edge_device.inference.detector import LightweightDetector, create_detector_from_env
-from edge_device.inference.rknn_detector import RKNNDetector, RKNNDetectorConfig
+from edge_device.inference.rknn_detector import (
+    RKNNDetector,
+    RKNNDetectorConfig,
+    create_rknn_detector_from_env,
+)
 
 
 class _FakeRuntime:
@@ -87,6 +91,25 @@ class RKNNDetectorTests(unittest.TestCase):
             self.assertTrue(detections)
             self.assertEqual(detector.model_version, "fallback-detector-v1")
             self.assertIn("rknn_inference_failed", detector.last_error or "")
+
+    def test_empty_model_path_env_falls_back_to_default_path(self) -> None:
+        old_backend = os.environ.get("EDGE_DETECTOR_BACKEND")
+        old_model_path = os.environ.get("EDGE_RKNN_MODEL_PATH")
+        try:
+            os.environ["EDGE_DETECTOR_BACKEND"] = "rknn"
+            os.environ["EDGE_RKNN_MODEL_PATH"] = ""
+            detector = create_rknn_detector_from_env(min_confidence=0.35)
+        finally:
+            if old_backend is None:
+                os.environ.pop("EDGE_DETECTOR_BACKEND", None)
+            else:
+                os.environ["EDGE_DETECTOR_BACKEND"] = old_backend
+            if old_model_path is None:
+                os.environ.pop("EDGE_RKNN_MODEL_PATH", None)
+            else:
+                os.environ["EDGE_RKNN_MODEL_PATH"] = old_model_path
+
+        self.assertEqual(detector.config.model_path, Path("./models/rknn/main_detector.rknn"))
 
 
 if __name__ == "__main__":

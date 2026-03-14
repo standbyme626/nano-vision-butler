@@ -25,6 +25,7 @@
 - [x] Prompt12B 前端协议冻结（event/heartbeat/command）（新增 protocol 文档、三份 schema、入站 schema_version 校验，2026-03-14 测试通过）
 - [x] Prompt12C 真实采集层替换（V4L2/GStreamer）（新增真实采集实现与重试机制，2026-03-14 单测通过）
 - [x] Prompt12D 真实 Snapshot 落地（JPEG）（_store_snapshot 真实 JPEG + 回传落库测试，2026-03-14 通过）
+- [x] Prompt12D-Hotfix 快照黑屏修复（`CapturedFrame.image_path` + V4L2 MJPG 直出 + 实机 `take-snapshot/run-once` 复测，2026-03-14）
 - [x] Prompt12E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）（新增 edge_command_client + 命令桥接集成测试，2026-03-14 通过）
 - [x] Prompt12F RKNN 检测模型部署（主检测）（新增 rknn_detector + 部署脚本/文档 + 降级单测，2026-03-14 通过）
 - [x] Prompt12G 跟踪/Zone/事件压缩质量提升（IoU 跟踪 + zone 映射 + 阈值/去重/节流压缩策略 + 集成测试，2026-03-14 通过）
@@ -61,6 +62,7 @@
 - [x] T13B 前端协议冻结（event/heartbeat/command）（新增 protocol 文档、三份 schema、入站 schema_version 校验，2026-03-14 测试通过）
 - [x] T13C 真实采集层替换（V4L2/GStreamer）（新增真实采集实现与重试机制，2026-03-14 单测通过）
 - [x] T13D 真实 Snapshot 落地（JPEG）（_store_snapshot 真实 JPEG + 回传落库测试，2026-03-14 通过）
+- [x] T13D-Hotfix 快照黑屏修复（实机 RK3566 验证 `take-snapshot/run-once`，抓拍恢复真实画面，2026-03-14）
 - [x] T13E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）（新增 edge_command_client + 命令桥接集成测试，2026-03-14 通过）
 - [x] T13F RKNN 检测模型部署（主检测）（新增 rknn_detector + 部署脚本/文档 + 降级单测，2026-03-14 通过）
 - [x] T13G 跟踪/Zone/事件压缩质量提升（新增 test_edge_event_quality + edge 相关测试 13 项通过，2026-03-14）

@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -229,7 +230,10 @@ class EdgeDeviceRuntime:
         self.config.snapshot_dir.mkdir(parents=True, exist_ok=True)
         file_name = f"{self.config.camera_id}_{frame.frame_id}.jpg"
         output = self.config.snapshot_dir / file_name
-        self._write_snapshot_jpeg(output=output, frame=frame)
+        try:
+            self._write_snapshot_jpeg(output=output, frame=frame)
+        finally:
+            self._cleanup_frame_artifacts(frame)
         return SnapshotItem(
             snapshot_id=f"snap-{uuid4().hex[:12]}",
             captured_at=frame.captured_at,
@@ -244,6 +248,14 @@ class EdgeDeviceRuntime:
         height = max(int(frame.height), 1)
         overlay_title = f"{self.config.camera_id} {frame.frame_id}"
         overlay_meta = f"{frame.captured_at} {frame.pixel_format}"
+
+        if self._try_write_snapshot_from_frame(
+            output=output,
+            frame=frame,
+            width=width,
+            height=height,
+        ):
+            return
 
         try:
             from PIL import Image, ImageDraw
@@ -297,6 +309,63 @@ class EdgeDeviceRuntime:
                 "Failed to encode snapshot JPEG "
                 f"(pillow={pil_error!r}, opencv={cv_exc!r})"
             ) from cv_exc
+
+    @staticmethod
+    def _cleanup_frame_artifacts(frame: CapturedFrame) -> None:
+        if not frame.image_path:
+            return
+        path = Path(frame.image_path)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            LOGGER.warning("Failed to cleanup captured frame artifact %s: %s", path, exc)
+
+    @staticmethod
+    def _try_write_snapshot_from_frame(
+        *,
+        output: Path,
+        frame: CapturedFrame,
+        width: int,
+        height: int,
+    ) -> bool:
+        if not frame.image_path:
+            return False
+        source = Path(frame.image_path)
+        if not source.is_file():
+            return False
+
+        try:
+            shutil.copyfile(source, output)
+            if output.exists() and output.stat().st_size > 0:
+                return True
+        except OSError as copy_exc:
+            LOGGER.warning("Direct snapshot copy from captured frame failed: %s", copy_exc)
+
+        try:
+            from PIL import Image
+
+            with Image.open(source) as image:
+                rgb = image.convert("RGB")
+                if rgb.size != (width, height):
+                    rgb = rgb.resize((width, height))
+                rgb.save(output, format="JPEG", quality=92, optimize=True)
+            return True
+        except Exception as pil_exc:
+            LOGGER.warning("Pillow snapshot write from captured frame failed: %s", pil_exc)
+
+        try:
+            import cv2
+
+            data = cv2.imread(str(source), cv2.IMREAD_COLOR)
+            if data is None:
+                return False
+            if data.shape[1] != width or data.shape[0] != height:
+                data = cv2.resize(data, (width, height))
+            ok = cv2.imwrite(str(output), data, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+            return bool(ok)
+        except Exception as cv_exc:
+            LOGGER.warning("OpenCV snapshot write from captured frame failed: %s", cv_exc)
+            return False
 
     def _assemble_clip(self, duration_sec: int) -> ClipItem:
         duration = max(int(duration_sec), 1)

@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from itertools import count
+from pathlib import Path
 from typing import Callable
 
 from edge_device.capture.camera import CaptureError, CapturedFrame, utc_now_iso8601
@@ -49,7 +51,7 @@ class V4L2Camera:
         errors: list[str] = []
         for attempt in range(1, self._config.retry_count + 1):
             try:
-                backend_name = self._capture_once()
+                backend_name, image_path = self._capture_once()
                 seq = next(self._counter)
                 return CapturedFrame(
                     frame_id=f"frame-{seq:06d}",
@@ -58,6 +60,7 @@ class V4L2Camera:
                     height=self._config.height,
                     source=self._config.source,
                     pixel_format=self._config.pixel_format,
+                    image_path=image_path,
                 )
             except CaptureError as exc:
                 detail = f"attempt={attempt}/{self._config.retry_count} backend={self._config.backend} error={exc}"
@@ -69,7 +72,7 @@ class V4L2Camera:
         joined = "; ".join(errors) if errors else "unknown capture error"
         raise CaptureError(f"capture failed after retries: {joined}")
 
-    def _capture_once(self) -> str:
+    def _capture_once(self) -> tuple[str, str | None]:
         backends = self._resolve_backends()
         last_error: str | None = None
         for backend in backends:
@@ -91,11 +94,22 @@ class V4L2Camera:
                     self._config.fps,
                     self._config.pixel_format,
                 )
-                return backend
+                image_path = self._capture_snapshot_jpeg()
+                if image_path is not None:
+                    _LOG.info("captured source frame to jpeg: %s", image_path)
+                return backend, image_path
             except CaptureError as exc:
                 last_error = f"{backend}: {exc}"
                 _LOG.warning("backend capture failed: %s", last_error)
         raise CaptureError(last_error or "no backend available")
+
+    def _capture_snapshot_jpeg(self) -> str | None:
+        if not self._command_exists("ffmpeg"):
+            return self._capture_snapshot_via_v4l2ctl()
+        output = self._capture_snapshot_via_ffmpeg()
+        if output is not None:
+            return output
+        return self._capture_snapshot_via_v4l2ctl()
 
     def _resolve_backends(self) -> list[str]:
         requested = (self._config.backend or "auto").strip().lower()
@@ -180,6 +194,108 @@ class V4L2Camera:
             "-",
         ]
         self._run_command(cmd)
+
+    def _capture_snapshot_via_ffmpeg(self) -> str | None:
+        output_file = tempfile.NamedTemporaryFile(prefix="nvb_frame_", suffix=".jpg", delete=False)
+        output_file.close()
+        output_path = Path(output_file.name)
+
+        ffmpeg_base = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "v4l2",
+            "-framerate",
+            str(self._config.fps),
+            "-video_size",
+            f"{self._config.width}x{self._config.height}",
+        ]
+        source_tail = [
+            "-i",
+            self._config.source,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(output_path),
+        ]
+
+        commands: list[list[str]] = []
+        input_format = self._ffmpeg_input_format(self._config.pixel_format)
+        if input_format:
+            commands.append(ffmpeg_base + ["-input_format", input_format] + source_tail)
+        commands.append(ffmpeg_base + source_tail)
+
+        last_error: CaptureError | None = None
+        for command in commands:
+            try:
+                self._run_command(command)
+                if output_path.exists() and output_path.stat().st_size > 0:
+                    return str(output_path)
+            except CaptureError as exc:
+                last_error = exc
+
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if last_error is not None:
+            _LOG.warning("ffmpeg snapshot capture failed: %s", last_error)
+        return None
+
+    def _capture_snapshot_via_v4l2ctl(self) -> str | None:
+        if not self._command_exists("v4l2-ctl"):
+            return None
+        normalized = (self._config.pixel_format or "").strip().lower()
+        if normalized not in {"mjpg", "mjpeg"}:
+            return None
+
+        output_file = tempfile.NamedTemporaryFile(prefix="nvb_frame_", suffix=".jpg", delete=False)
+        output_file.close()
+        output_path = Path(output_file.name)
+        fmt = (
+            f"width={self._config.width},height={self._config.height},"
+            f"pixelformat={self._config.pixel_format}"
+        )
+        cmd = [
+            "v4l2-ctl",
+            "--device",
+            self._config.source,
+            f"--set-fmt-video={fmt}",
+            "--stream-mmap=3",
+            "--stream-count=1",
+            f"--stream-to={output_path}",
+        ]
+        try:
+            self._run_command(cmd)
+            if output_path.exists() and output_path.stat().st_size > 0:
+                return str(output_path)
+        except CaptureError as exc:
+            _LOG.warning("v4l2 snapshot capture failed: %s", exc)
+
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _ffmpeg_input_format(pixel_format: str) -> str:
+        normalized = (pixel_format or "").strip().lower()
+        aliases = {
+            "mjpg": "mjpeg",
+            "mjpeg": "mjpeg",
+            "yuyv": "yuyv422",
+            "yuy2": "yuyv422",
+            "uyvy": "uyvy422",
+            "nv12": "nv12",
+            "rgb24": "rgb24",
+            "bgr24": "bgr24",
+        }
+        return aliases.get(normalized, normalized)
 
     def _run_command(self, command: list[str]) -> None:
         try:

@@ -528,6 +528,30 @@
 
 ---
 
+## T13D-Hotfix 快照黑屏修复（真实帧优先 + 低依赖抓拍）
+状态：DONE（2026-03-14）
+优先级：P1
+依赖：T13D
+
+### 目标
+修复 RK3566 端快照黑屏，确保 `take-snapshot` 输出真实相机画面，而不是占位黑底图。
+
+### 输出
+- edge_device/capture/camera.py（`CapturedFrame` 增加 `image_path`）
+- edge_device/capture/v4l2_camera.py（优先抓取真实 JPEG；无 ffmpeg 时支持 v4l2 MJPG 直出）
+- edge_device/api/server.py（写快照优先使用真实帧文件，避免依赖缺失时退化黑底）
+- edge_device/inference/rknn_detector.py（修复空 `EDGE_RKNN_MODEL_PATH` 被解析为 `.`）
+- tests/unit/test_edge_capture.py
+- tests/unit/test_edge_runtime.py
+- tests/unit/test_rknn_detector.py
+
+### 验收
+- RK3566 实机 `take-snapshot` 成功返回且图像非黑屏
+- `run-once` 能产出有效 `snapshot_uri` 且链路不中断
+- 相关单测通过
+
+---
+
 ## T13E 命令闭环最小打通（替换后端 StubEdgeDeviceAdapter）
 状态：DONE（2026-03-14）
 优先级：P1
