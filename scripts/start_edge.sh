@@ -35,6 +35,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${EDGE_PENDING_EVENT_MAX:=256}"
 : "${EDGE_PENDING_FLUSH_BATCH:=32}"
 : "${PYTHON_BIN:=python3}"
+: "${VISION_BUTLER_TIME_MODE:=local}"
+: "${TZ:=Asia/Shanghai}"
 
 if [[ $# -gt 0 ]]; then
   EDGE_ACTION="$1"
@@ -72,6 +74,8 @@ export EDGE_CLIP_BUFFER_SIZE
 export EDGE_PENDING_EVENT_DIR
 export EDGE_PENDING_EVENT_MAX
 export EDGE_PENDING_FLUSH_BATCH
+export VISION_BUTLER_TIME_MODE
+export TZ
 
 echo "[INFO] Starting edge runtime"
 echo "[INFO] Action             : ${EDGE_ACTION}"
@@ -102,6 +106,7 @@ echo "[INFO] Clip buf size      : ${EDGE_CLIP_BUFFER_SIZE}"
 echo "[INFO] Pending event dir  : ${EDGE_PENDING_EVENT_DIR}"
 echo "[INFO] Pending event max  : ${EDGE_PENDING_EVENT_MAX}"
 echo "[INFO] Flush batch size   : ${EDGE_PENDING_FLUSH_BATCH}"
+echo "[INFO] Time mode          : ${VISION_BUTLER_TIME_MODE} (TZ=${TZ})"
 
 if [[ "${EDGE_LOOP}" == "1" ]]; then
   while true; do

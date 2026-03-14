@@ -36,6 +36,7 @@
 - [x] Prompt14-Hotfix 测试文档拆分与必要性分析（保留测试.md 原文，新增 docs/edge/testing_index.md + model_selection_strategy.md + model_ab_test_matrix.md + test_necessity_analysis.md；2026-03-14 运行 edge 相关回归通过）
 - [x] Prompt15 最终联调收尾与交付
 - [x] Prompt16 轻前端重后端改造第一阶段（新增 docs/edge/light_edge_heavy_backend_refactor.md，edge analysis_requests 协议扩展与后端 OCR 自动触发链路，2026-03-14）
+- [x] Prompt16-Hotfix 日志时间统一为本地时区（新增 `VISION_BUTLER_TIME_MODE`，启动脚本默认 `local + Asia/Shanghai`，2026-03-14）
 
 ## B. TASKS 任务清单（T0-T16 + T13A-T13I）
 - [x] T0 仓库初始化与约束固化
@@ -71,6 +72,7 @@
 - [x] T15-Hotfix 测试文档拆分与必要性分析（新增 edge 测试文档拆分与索引，2026-03-14 执行 pytest tests/unit/test_rknn_detector.py tests/unit/test_edge_runtime.py tests/integration/test_edge_event_quality.py 通过）
 - [x] T16 最终联调收尾与交付
 - [x] T17 轻前端重后端改造第一阶段（edge analysis_requests + backend OCR hook + 协议/schema/测试同步，2026-03-14）
+- [x] T17-Hotfix 日志时间统一为本地时区（`src/db/session.py` + edge 时间函数支持 local/utc，`start_backend.sh`/`start_edge.sh` 默认本地时区，2026-03-14）
 
 ## C. 验收打勾规则
 - [ ] 目标文件已创建或修改正确

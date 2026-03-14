@@ -7,14 +7,19 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
 from edge_device.api.backend_client import BackendApiClient
 from edge_device.cache.ring_buffer import ClipItem, MediaRingBuffer, SnapshotItem
-from edge_device.capture.camera import CameraProtocol, CapturedFrame, create_camera, utc_now_iso8601
+from edge_device.capture.camera import (
+    CameraProtocol,
+    CapturedFrame,
+    compact_now_for_filename,
+    create_camera,
+    utc_now_iso8601,
+)
 from edge_device.compression.event_compressor import EventCompressor
 from edge_device.health.heartbeat import HeartbeatBuilder
 from edge_device.inference.detector import DetectorProtocol, create_detector_from_env
@@ -301,7 +306,7 @@ class EdgeDeviceRuntime:
             self.cache.add_snapshot(latest_snapshot)
 
         self.config.clip_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        timestamp = compact_now_for_filename()
         file_name = f"{self.config.camera_id}_clip_{duration}s_{timestamp}.mp4"
         output = self.config.clip_dir / file_name
 
@@ -458,7 +463,7 @@ class EdgeDeviceRuntime:
 
     def _enqueue_pending_event(self, payload: dict[str, Any]) -> None:
         priority = self._pending_priority(payload)
-        now = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        now = compact_now_for_filename()
         file_name = f"{priority:02d}_{now}_{uuid4().hex[:8]}.json"
         output = self.config.pending_event_dir / file_name
         output.write_text(

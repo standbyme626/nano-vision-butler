@@ -772,6 +772,31 @@
 
 ---
 
+## T17-Hotfix 日志时间统一为本地时区
+状态：DONE（2026-03-14）
+优先级：P2
+依赖：T17
+
+### 目标
+将运行日志与运行时时间字段统一为本地时间显示，减少 UTC 与本地时间换算成本。
+
+### 输出
+- `src/db/session.py`（时间格式支持 `VISION_BUTLER_TIME_MODE=local|utc`）
+- `edge_device/capture/camera.py`（edge 统一时间函数 + 本地文件名时间戳）
+- `edge_device/health/heartbeat.py`（复用 edge 统一时间函数）
+- `edge_device/compression/event_compressor.py`（复用 edge 统一时间函数）
+- `edge_device/api/server.py`（clip/pending 文件名时间戳与配置保持一致）
+- `scripts/start_backend.sh`（默认 `VISION_BUTLER_TIME_MODE=local` + `TZ=Asia/Shanghai`）
+- `scripts/start_edge.sh`（默认 `VISION_BUTLER_TIME_MODE=local` + `TZ=Asia/Shanghai`）
+- `scripts/stack_ctl.sh`（补充时间相关环境变量说明）
+
+### 验收
+- 通过启动脚本运行时，日志时间按本地时区输出（`+08:00`）
+- 可通过 `VISION_BUTLER_TIME_MODE=utc` 切回 UTC 兼容模式
+- 相关回归测试通过
+
+---
+
 ## 推荐并行方式
 
 ### A 线：数据与事实层

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import count
@@ -9,7 +10,24 @@ from typing import Protocol
 
 
 def utc_now_iso8601() -> str:
+    mode = _time_mode()
+    if mode == "local":
+        return datetime.now().astimezone().isoformat(timespec="milliseconds")
     return datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def compact_now_for_filename() -> str:
+    mode = _time_mode()
+    if mode == "local":
+        return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f")
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def _time_mode() -> str:
+    raw = (os.getenv("VISION_BUTLER_TIME_MODE", "utc") or "utc").strip().lower()
+    if raw in {"local", "asia/shanghai", "cst"}:
+        return "local"
+    return "utc"
 
 
 @dataclass(frozen=True)

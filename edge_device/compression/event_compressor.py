@@ -4,18 +4,13 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timezone
 from typing import Callable
 from uuid import uuid4
 
-from edge_device.capture.camera import CapturedFrame
+from edge_device.capture.camera import CapturedFrame, utc_now_iso8601
 from edge_device.inference.detector import Detection
 
 EVENT_SCHEMA_VERSION = "edge.event.v1"
-
-
-def utc_now_iso8601() -> str:
-    return datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 class EventCompressor:

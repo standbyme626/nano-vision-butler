@@ -8,10 +8,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${BACKEND_RELOAD:=0}"
 : "${BACKEND_CONFIG_DIR:=${ROOT_DIR}/config}"
 : "${PYTHON_BIN:=python3}"
+: "${VISION_BUTLER_TIME_MODE:=local}"
+: "${TZ:=Asia/Shanghai}"
 
 mkdir -p "${ROOT_DIR}/data" "${ROOT_DIR}/logs"
 cd "${ROOT_DIR}"
 export VISION_BUTLER_CONFIG_DIR="${BACKEND_CONFIG_DIR}"
+export VISION_BUTLER_TIME_MODE
+export TZ
 
 echo "[INFO] Starting backend service"
 echo "[INFO] Root      : ${ROOT_DIR}"
@@ -19,6 +23,7 @@ echo "[INFO] Host      : ${BACKEND_HOST}"
 echo "[INFO] Port      : ${BACKEND_PORT}"
 echo "[INFO] Reload    : ${BACKEND_RELOAD}"
 echo "[INFO] Config dir: ${BACKEND_CONFIG_DIR}"
+echo "[INFO] Time mode : ${VISION_BUTLER_TIME_MODE} (TZ=${TZ})"
 
 CMD=(
   "${PYTHON_BIN}"

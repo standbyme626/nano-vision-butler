@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -10,9 +11,10 @@ from typing import Generator
 
 
 def utc_now_iso8601() -> str:
-    return datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    mode = _time_mode()
+    if mode == "local":
+        return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    return datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def normalize_iso8601(value: str, field_name: str) -> str:
@@ -22,9 +24,19 @@ def normalize_iso8601(value: str, field_name: str) -> str:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(f"Invalid ISO8601 for {field_name}: {value}") from exc
-    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    mode = _time_mode()
+    if mode == "local":
+        return dt.astimezone().isoformat(timespec="milliseconds")
+    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _time_mode() -> str:
+    raw = (os.getenv("VISION_BUTLER_TIME_MODE", "utc") or "utc").strip().lower()
+    if raw in {"local", "asia/shanghai", "cst"}:
+        return "local"
+    return "utc"
 
 
 def require_non_empty(value: str | None, field_name: str) -> str:
