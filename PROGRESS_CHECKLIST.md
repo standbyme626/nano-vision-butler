@@ -42,6 +42,11 @@
 - [x] Prompt16-Hotfix 摄像头 capture 限制解除（RK3566 实机确认 `YUYV@720p` 平均采集约 200ms、`MJPG@720p` 约 33ms；`start_edge.sh` 增加 v4l2 自动调优并文档同步，2026-03-15）
 - [x] Prompt16-Hotfix 默认模型切换 YOLOv8n INT8 + 并行流水线（`yolov8n_official_i8_rk3566.rknn` 作为默认模型，新增 `LatestFramePrefetchCamera` 并行采集，2026-03-15）
 - [x] Prompt16-Hotfix 切换 Rockchip 优化版 YOLOv8n INT8（默认模型更新为 `yolov8n_rockchip_opt_i8_rk3566.rknn`，导出脚本补齐 INT8 量化与 onnx 兼容修复，RK3566 实机复测，2026-03-15）
+- [x] Prompt16-Hotfix 分段性能优化与横向对比口径统一（`run_once` 增加分段计时与异步上传模式，`run_infer_benchmark.sh` 改为单进程循环并输出分段均值，`V4L2Camera` 改为单次 snapshot 路径，RK3566 `.venv_rknn` 补齐 `opencv-python-headless`，2026-03-15）
+- [x] Prompt16-Hotfix 当前环境查询改造为“抓拍→场景描述→结构化结论”（`reply_service` 文本场景链路改为 `take_snapshot -> describe_scene`，补齐 `describe_scene` tool allowlist，`test_current_scene_query` 回归，2026-03-15）
+- [x] Prompt16-Hotfix 修复 take_snapshot 外键错误（兼容 `device_id` 误传 `camera_id`，拒绝审计仅写合法 `device_id`，`test_device_service` + 当前环境实测通过，2026-03-15）
+- [x] Prompt16-Hotfix RKNN 标签与模型分类对齐（默认 `EDGE_RKNN_LABELS` 切换 COCO80，`rknn_detector` 默认/空值回退同步，RK3566 实机 `run-once` 验证 `detector_error=null`，2026-03-15）
+- [x] Prompt-Doc README 对齐计划书与现状能力（补充“计划书与当前项目差异”章节，2026-03-17）
 
 ## B. TASKS 任务清单（T0-T16 + T13A-T13I）
 - [x] T0 仓库初始化与约束固化
@@ -83,6 +88,11 @@
 - [x] T17-Hotfix 摄像头 capture 限制解除（`scripts/start_edge.sh` 增加 `EDGE_CAPTURE_APPLY_V4L2_TUNING` 与实机参数固化，`docs/EDGE_DEVICE.md` 与 `docs/edge/model_ab_test_matrix.md` 同步，2026-03-15）
 - [x] T17-Hotfix 默认模型切换 YOLOv8n INT8 + 并行流水线（`edge_device/capture/camera.py` 并行预取，`edge_device/api/server.py` 注入并行配置，`scripts/start_edge.sh` 默认模型切换，2026-03-15）
 - [x] T17-Hotfix 切换 Rockchip 优化版 YOLOv8n INT8（默认模型切到 `yolov8n_rockchip_opt_i8_rk3566.rknn`，`scripts/rknn/export_to_rknn.sh` 支持 INT8 量化与 onnx 兼容补丁，RK3566 实机复测，2026-03-15）
+- [x] T17-Hotfix 分段性能优化与横向对比口径统一（`edge_device/api/server.py` 支持 `EDGE_BACKEND_POST_MODE/EDGE_RUN_ONCE_SNAPSHOT_MODE`，`scripts/rknn/run_infer_benchmark.sh` 单进程分段基准，`edge_device/capture/v4l2_camera.py` 去掉重复预抓拍开销，RK3566 实机复测并留档 `logs/rk3566_bench_20260315/`，2026-03-15）
+- [x] T17-Hotfix 当前环境分析链路改造（`take_snapshot -> describe_scene -> 结构化结论`，失败时回退历史证据；更新 `config/access.yaml` 与 `config/runtime/access.yaml` 的 tool allowlist；相关 e2e/integration 测试通过，2026-03-15）
+- [x] T17-Hotfix 修复 `take_snapshot` 外键失败（`device_service` 兼容 camera_id/device_id 混用；拒绝审计写入前归一化 device_id，未知设备写 null 防 FK；单测与实链路复测通过，2026-03-15）
+- [x] T17-Hotfix RKNN 标签对齐 COCO80（`scripts/start_edge.sh` 默认标签改为 COCO80，`edge_device/inference/rknn_detector.py` 默认与空值回退改为 COCO80；`pytest -q tests/unit/test_rknn_detector.py tests/unit/test_edge_runtime.py tests/unit/test_edge_capture.py` 通过；RK3566 实机复测通过，2026-03-15）
+- [x] T-Doc README 对齐计划书与现状能力（README 增加“计划书与当前项目差异”，2026-03-17）
 
 ## C. 验收打勾规则
 - [ ] 目标文件已创建或修改正确
