@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from PIL import Image
 
 from edge_device.api.server import EdgeDeviceConfig, EdgeDeviceRuntime
 from edge_device.capture.camera import CapturedFrame
+from edge_device.inference.detector import Detection
 
 
 class FakeBackendClient:
@@ -33,6 +37,59 @@ class SingleFrameCamera:
         return self._frame
 
 
+class SlowBackendClient(FakeBackendClient):
+    def __init__(self, delay_sec: float = 0.1) -> None:
+        super().__init__()
+        self.delay_sec = delay_sec
+
+    def post_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        time.sleep(self.delay_sec)
+        return super().post_event(payload)
+
+
+class LowConfidenceDetector:
+    def __init__(self) -> None:
+        self.model_version = "test-low-conf-detector"
+        self.min_confidence = 0.2
+        self.last_error: str | None = None
+
+    def detect(self, frame: CapturedFrame) -> list[Detection]:
+        return [
+            Detection(
+                object_name="chair",
+                object_class="chair",
+                confidence=0.25,
+                bbox=(12, 12, 120, 120),
+                zone_id="entry_door",
+            )
+        ]
+
+
+class MixedClassDetector:
+    def __init__(self) -> None:
+        self.model_version = "test-mixed-class-detector"
+        self.min_confidence = 0.2
+        self.last_error: str | None = None
+
+    def detect(self, frame: CapturedFrame) -> list[Detection]:
+        return [
+            Detection(
+                object_name="chair",
+                object_class="chair",
+                confidence=0.85,
+                bbox=(8, 8, 80, 80),
+                zone_id="entry_door",
+            ),
+            Detection(
+                object_name="banana",
+                object_class="banana",
+                confidence=0.86,
+                bbox=(16, 16, 96, 96),
+                zone_id="entry_door",
+            ),
+        ]
+
+
 class EdgeRuntimeUnitTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = tempfile.TemporaryDirectory(prefix="vision_butler_edge_t13_")
@@ -52,6 +109,7 @@ class EdgeRuntimeUnitTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.runtime.close()
         self.tmp_dir.cleanup()
 
     def test_run_once_posts_backend_event_with_envelope_payload(self) -> None:
@@ -72,6 +130,12 @@ class EdgeRuntimeUnitTests(unittest.TestCase):
         envelope = result["data"]["event_envelope"]
         self.assertEqual(envelope["schema"], "vision_butler.edge.event_envelope.v1")
         self.assertEqual(envelope["payload"]["trace_id"], "trace-edge-run-1")
+        timings = result["data"]["timings_ms"]
+        self.assertIn("capture_ms", timings)
+        self.assertIn("detector_infer_ms", timings)
+        self.assertIn("emit_ms", timings)
+        self.assertIn("total_ms", timings)
+        self.assertEqual(result["data"]["backend_post_mode"], "sync")
 
     def test_heartbeat_payload_is_built_and_sent(self) -> None:
         result = self.runtime.send_heartbeat(trace_id="trace-edge-hb-1")
@@ -149,6 +213,104 @@ class EdgeRuntimeUnitTests(unittest.TestCase):
             self.assertLess(center[1], 120)
             self.assertLess(center[2], 120)
         self.assertFalse(source_image.exists(), msg="temporary captured frame artifact should be cleaned")
+
+    def test_run_once_snapshot_can_be_disabled(self) -> None:
+        root = Path(self.tmp_dir.name)
+        runtime = EdgeDeviceRuntime(
+            config=EdgeDeviceConfig(
+                device_id="rk3566-dev-01",
+                camera_id="cam-entry-01",
+                backend_base_url="http://127.0.0.1:8000",
+                run_once_snapshot_mode="off",
+                snapshot_dir=root / "snapshots-off",
+                clip_dir=root / "clips-off",
+            ),
+            backend_client=self.backend,
+        )
+        try:
+            result = runtime.run_once(trace_id="trace-edge-run-off")
+            self.assertTrue(result["ok"])
+            self.assertIsNone(result["data"]["snapshot_uri"])
+        finally:
+            runtime.close()
+
+    def test_async_backend_mode_queues_event(self) -> None:
+        root = Path(self.tmp_dir.name)
+        slow_backend = SlowBackendClient(delay_sec=0.15)
+        runtime = EdgeDeviceRuntime(
+            config=EdgeDeviceConfig(
+                device_id="rk3566-dev-01",
+                camera_id="cam-entry-01",
+                backend_base_url="http://127.0.0.1:8000",
+                backend_post_mode="async",
+                backend_post_queue_max=2,
+                snapshot_dir=root / "snapshots-async",
+                clip_dir=root / "clips-async",
+            ),
+            backend_client=slow_backend,
+        )
+        try:
+            result = runtime.run_once(trace_id="trace-edge-run-async")
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["data"]["backend_post_mode"], "async")
+            self.assertTrue(result["data"]["event_queued"])
+            self.assertTrue(result["data"]["backend_response"]["ok"])
+        finally:
+            runtime.close()
+
+    def test_event_compressor_follows_detector_threshold(self) -> None:
+        root = Path(self.tmp_dir.name)
+        runtime = EdgeDeviceRuntime(
+            config=EdgeDeviceConfig(
+                device_id="rk3566-dev-01",
+                camera_id="cam-entry-01",
+                backend_base_url="http://127.0.0.1:8000",
+                snapshot_dir=root / "snapshots-conf-sync",
+                clip_dir=root / "clips-conf-sync",
+            ),
+            backend_client=self.backend,
+            detector=LowConfidenceDetector(),
+        )
+        try:
+            result = runtime.run_once(trace_id="trace-edge-threshold-sync")
+            payload = result["data"]["event_envelope"]["payload"]
+            self.assertEqual(payload["event_type"], "object_detected")
+            self.assertEqual(len(payload["raw_detections"]), 1)
+            self.assertEqual(payload["raw_detections"][0]["object_class"], "chair")
+            self.assertNotIn("below_conf_threshold", payload["compress_reason"])
+        finally:
+            runtime.close()
+
+    def test_class_allowlist_filters_detector_output(self) -> None:
+        root = Path(self.tmp_dir.name)
+        with patch.dict(
+            os.environ,
+            {
+                "EDGE_DETECT_CLASS_ALLOWLIST": "chair,table",
+            },
+            clear=False,
+        ):
+            runtime = EdgeDeviceRuntime(
+                config=EdgeDeviceConfig(
+                    device_id="rk3566-dev-01",
+                    camera_id="cam-entry-01",
+                    backend_base_url="http://127.0.0.1:8000",
+                    snapshot_dir=root / "snapshots-allowlist",
+                    clip_dir=root / "clips-allowlist",
+                ),
+                backend_client=self.backend,
+                detector=MixedClassDetector(),
+            )
+            try:
+                result = runtime.run_once(trace_id="trace-edge-allowlist")
+                payload = result["data"]["event_envelope"]["payload"]
+                self.assertEqual(result["data"]["detections_raw"], 2)
+                self.assertEqual(result["data"]["detections_filtered"], 1)
+                self.assertEqual(payload["event_type"], "object_detected")
+                self.assertEqual(len(payload["raw_detections"]), 1)
+                self.assertEqual(payload["raw_detections"][0]["object_class"], "chair")
+            finally:
+                runtime.close()
 
 
 if __name__ == "__main__":

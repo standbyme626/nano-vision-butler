@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 from edge_device.capture.camera import CapturedFrame
 from edge_device.compression.event_compressor import EventCompressor
@@ -198,6 +200,47 @@ class EdgeEventQualityIntegrationTests(unittest.TestCase):
         self.assertIsInstance(payload["analysis_requests"], list)
         self.assertEqual(payload["analysis_requests"][0]["type"], "ocr_quick_read")
         self.assertEqual(payload["analysis_requests"][0]["input_uri"], "file:///tmp/package.jpg")
+
+    def test_event_compression_emits_periodic_q8_request_for_person(self) -> None:
+        frame = self._frame()
+        person = Detection(
+            object_name="person",
+            object_class="person",
+            confidence=0.94,
+            bbox=(180, 80, 520, 620),
+            zone_id="entry_door",
+            track_id="trk-q8-007",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "EDGE_ANALYSIS_ENABLE": "1",
+                "EDGE_ANALYSIS_OCR_ENABLE": "0",
+                "EDGE_ANALYSIS_Q8_ENABLE": "1",
+                "EDGE_ANALYSIS_Q8_CLASSES": "person",
+                "EDGE_ANALYSIS_Q8_INTERVAL_SEC": "30",
+            },
+            clear=False,
+        ):
+            compressor = EventCompressor(
+                min_confidence=0.20,
+                dedupe_window_sec=0.0,
+                throttle_window_sec=0.0,
+                time_provider=lambda: 500.0,
+            )
+            envelope = compressor.build_envelope(
+                device_id="rk3566-dev-01",
+                camera_id="cam-entry-01",
+                seq_no=89,
+                frame=frame,
+                detections=[person],
+                snapshot_uri="file:///tmp/person.jpg",
+            )
+
+        payload = envelope["payload"]
+        self.assertTrue(payload["analysis_required"])
+        request_types = [item["type"] for item in payload["analysis_requests"]]
+        self.assertIn("vision_q8_describe", request_types)
 
 
 if __name__ == "__main__":

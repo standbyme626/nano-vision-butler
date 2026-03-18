@@ -118,7 +118,14 @@
         "properties": {
           "type": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "ocr_quick_read",
+              "ocr_extract_fields",
+              "vision_q8_describe",
+              "scene_recheck",
+              "object_state_recheck",
+              "zone_state_recheck"
+            ]
           },
           "priority": {
             "type": ["string", "null"]
@@ -133,6 +140,15 @@
             "type": ["string", "null"]
           },
           "track_id": {
+            "type": ["string", "null"]
+          },
+          "object_name": {
+            "type": ["string", "null"]
+          },
+          "camera_id": {
+            "type": ["string", "null"]
+          },
+          "zone_id": {
             "type": ["string", "null"]
           },
           "field_schema": {

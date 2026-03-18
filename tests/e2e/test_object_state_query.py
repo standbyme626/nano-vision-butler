@@ -94,6 +94,19 @@ class ObjectStateQueryE2ETests(unittest.TestCase):
         self.assertIn("对象状态", text)
         self.assertIn("state_value:", text)
 
+    def test_object_state_text_query_routes_to_state_plus_staleness(self) -> None:
+        response = self.client.post(
+            "/telegram/update",
+            json=self._build_update(update_id=6302, text="package现在还在不在？"),
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["status"], "processed")
+        text = payload["outbound_messages"][0]["text"]
+        self.assertIn("当前环境结构化结论", text)
+        self.assertIn("调用链: get_object_state -> evaluate_staleness", text)
+        self.assertIn("新鲜度:", text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

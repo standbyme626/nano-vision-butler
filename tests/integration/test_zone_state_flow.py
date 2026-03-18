@@ -84,13 +84,14 @@ class ZoneStateFlowIntegrationTests(unittest.TestCase):
         self.assertEqual(first_data["state_value"], "occupied")
         self.assertEqual(first_data["reason_code"], "refreshed_from_zone_observations")
         self.assertGreaterEqual(int(first_data["evidence_count"]), 2)
+        self.assertIn(first_data["freshness_level"], {"fresh", "aging"})
 
         second = self.client.get(
             "/memory/zone-state",
             params={"camera_id": "cam-entry-01", "zone_id": "entry_door"},
         )
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(second.json()["data"]["reason_code"], "state_row_found")
+        self.assertIn(second.json()["data"]["reason_code"], {"state_row_found", "state_row_found_stale"})
 
 
 if __name__ == "__main__":

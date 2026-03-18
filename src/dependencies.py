@@ -12,6 +12,7 @@ from src.db.repositories.audit_repo import AuditRepo
 from src.db.repositories.device_repo import DeviceRepo
 from src.db.repositories.event_repo import EventRepo
 from src.db.repositories.media_repo import MediaRepo
+from src.db.repositories.notification_rule_repo import NotificationRuleRepo
 from src.db.repositories.observation_repo import ObservationRepo
 from src.db.repositories.ocr_repo import OcrRepo
 from src.db.repositories.state_repo import StateRepo
@@ -21,11 +22,13 @@ from src.security.security_guard import SecurityGuard
 from src.services.device_service import DeviceService as DeviceCoreService
 from src.services.memory_service import MemoryService
 from src.services.ocr_service import OCRService
+from src.services.notification_service import NotificationService
 from src.services.policy_service import PolicyService as PolicyCoreService
 from src.services.perception_service import PerceptionService
 from src.services.reply_builder import TelegramReplyBuilder
 from src.services.reply_service import TelegramReplyService
 from src.services.state_service import StateService as StateCoreService
+from src.services.vision_analysis_service import VisionAnalysisService
 from src.settings import AppConfig
 
 
@@ -236,11 +239,23 @@ def get_device_service(
         event_repo=EventRepo(conn),
         config=config,
     )
+    state_service = StateCoreService(
+        state_repo=StateRepo(conn),
+        observation_repo=ObservationRepo(conn),
+        conn=conn,
+        config=config,
+    )
     ocr_service = OCRService(
         media_repo=media_repo,
         observation_repo=ObservationRepo(conn),
         event_repo=EventRepo(conn),
         ocr_repo=OcrRepo(conn),
+        audit_repo=audit_repo,
+    )
+    vision_analysis_service = VisionAnalysisService(
+        media_repo=media_repo,
+        observation_repo=ObservationRepo(conn),
+        event_repo=EventRepo(conn),
         audit_repo=audit_repo,
     )
     perception_service = PerceptionService(
@@ -250,6 +265,13 @@ def get_device_service(
         config=config,
         security_guard=security_guard,
         ocr_service=ocr_service,
+        vision_analysis_service=vision_analysis_service,
+        state_service=state_service,
+        notification_service=NotificationService(
+            notification_rule_repo=NotificationRuleRepo(conn),
+            audit_repo=audit_repo,
+            config=config,
+        ),
     )
     core_service = DeviceCoreService(
         device_repo=device_repo,

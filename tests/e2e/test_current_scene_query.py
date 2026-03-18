@@ -90,7 +90,25 @@ class CurrentSceneQueryE2ETests(unittest.TestCase):
         self.assertEqual(payload["status"], "processed")
         self.assertIsNone(payload["command"])
         self.assertTrue(payload["outbound_messages"])
-        self.assertIn("世界状态摘要", payload["outbound_messages"][0]["text"])
+        text = payload["outbound_messages"][0]["text"]
+        self.assertIn("当前环境结构化结论", text)
+        self.assertIn("实时快照", text)
+        self.assertIn("最近事件", text)
+        self.assertIn("结论:", text)
+        self.assertIn("新鲜度:", text)
+
+    def test_recent_events_text_query(self) -> None:
+        response = self.client.post(
+            "/telegram/update",
+            json=self._build_update(update_id=6102, text="最近发生了什么？"),
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["status"], "processed")
+        text = payload["outbound_messages"][0]["text"]
+        self.assertIn("当前环境结构化结论", text)
+        self.assertIn("调用链: query_recent_events", text)
+        self.assertIn("事件时间线", text)
 
 
 if __name__ == "__main__":

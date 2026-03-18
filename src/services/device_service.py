@@ -135,15 +135,16 @@ class DeviceService:
                 },
             }
         except DeviceExecutionError as exc:
+            audit_device_id = self._resolve_audit_device_id(device_hint)
             self._write_audit(
                 action="device_take_snapshot",
                 decision="deny",
-                device_id=device_hint,
+                device_id=audit_device_id,
                 target_type="device",
                 target_id=device_hint,
                 reason=exc.code,
                 trace_id=self._as_text(payload.get("trace_id")),
-                meta={"message": exc.message, "command_id": command_id},
+                meta={"message": exc.message, "command_id": command_id, "device_hint": device_hint},
             )
             self._audit_repo.conn.commit()
             raise
@@ -213,15 +214,16 @@ class DeviceService:
                 },
             }
         except DeviceExecutionError as exc:
+            audit_device_id = self._resolve_audit_device_id(device_hint)
             self._write_audit(
                 action="device_get_recent_clip",
                 decision="deny",
-                device_id=device_hint,
+                device_id=audit_device_id,
                 target_type="device",
                 target_id=device_hint,
                 reason=exc.code,
                 trace_id=self._as_text(payload.get("trace_id")),
-                meta={"message": exc.message, "command_id": command_id},
+                meta={"message": exc.message, "command_id": command_id, "device_hint": device_hint},
             )
             self._audit_repo.conn.commit()
             raise
@@ -238,6 +240,9 @@ class DeviceService:
         device: DeviceStatus | None = None
         if device_id:
             device = self._device_repo.get_device_status(device_id)
+            if device is None:
+                # Accept camera_id accidentally provided in device_id.
+                device = self._device_repo.get_device_status_by_camera(device_id)
         elif camera_id:
             device = self._device_repo.get_device_status_by_camera(camera_id)
 
@@ -358,6 +363,18 @@ class DeviceService:
                 created_at=None,
             )
         )
+
+    def _resolve_audit_device_id(self, device_hint: str | None) -> str | None:
+        hint = self._as_text(device_hint)
+        if not hint:
+            return None
+        device = self._device_repo.get_device_status(hint)
+        if device is not None:
+            return device.device_id
+        by_camera = self._device_repo.get_device_status_by_camera(hint)
+        if by_camera is not None:
+            return by_camera.device_id
+        return None
 
     def _build_device_profiles(self) -> dict[str, dict[str, Any]]:
         profiles: dict[str, dict[str, Any]] = {}

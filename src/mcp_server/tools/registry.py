@@ -59,6 +59,21 @@ class MCPToolRegistry:
                 description="Read zone state from state service.",
                 input_schema={"camera_id": "str", "zone_id": "str", "trace_id": "str?"},
             ),
+            "refresh_object_state": ToolSpec(
+                name="refresh_object_state",
+                description="Force refresh object state from latest observation evidence.",
+                input_schema={
+                    "object_name": "str",
+                    "camera_id": "str?",
+                    "zone_id": "str?",
+                    "trace_id": "str?",
+                },
+            ),
+            "refresh_zone_state": ToolSpec(
+                name="refresh_zone_state",
+                description="Force refresh zone state from recent observations.",
+                input_schema={"camera_id": "str", "zone_id": "str", "trace_id": "str?"},
+            ),
             "get_world_state": ToolSpec(
                 name="get_world_state",
                 description="Read current world snapshot from world_state_view.",
@@ -108,6 +123,11 @@ class MCPToolRegistry:
                 description="Query device runtime status.",
                 input_schema={"device_id": "str", "trace_id": "str?"},
             ),
+            "audit_recent_access": ToolSpec(
+                name="audit_recent_access",
+                description="Read recent access-control audit decisions.",
+                input_schema={"limit": "int?", "trace_id": "str?"},
+            ),
         }
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "take_snapshot": self._take_snapshot,
@@ -116,12 +136,15 @@ class MCPToolRegistry:
             "last_seen_object": self._last_seen_object,
             "get_object_state": self._get_object_state,
             "get_zone_state": self._get_zone_state,
+            "refresh_object_state": self._refresh_object_state,
+            "refresh_zone_state": self._refresh_zone_state,
             "get_world_state": self._get_world_state,
             "query_recent_events": self._query_recent_events,
             "evaluate_staleness": self._evaluate_staleness,
             "ocr_quick_read": self._ocr_quick_read,
             "ocr_extract_fields": self._ocr_extract_fields,
             "device_status": self._device_status,
+            "audit_recent_access": self._audit_recent_access,
         }
 
     def list_tools(self) -> list[dict[str, Any]]:
@@ -261,6 +284,51 @@ class MCPToolRegistry:
             is_stale=bool(state.get("is_stale", 0)),
         )
 
+    def _refresh_object_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        trace_id = self._as_text(payload.get("trace_id"))
+        object_name = require_non_empty(self._as_text(payload.get("object_name")), "object_name")
+        camera_id = self._as_text(payload.get("camera_id"))
+        zone_id = self._as_text(payload.get("zone_id"))
+        with self._runtime.services() as svc:
+            _, reason_code = svc.state_service.refresh_object_state(
+                object_name=object_name,
+                camera_id=camera_id,
+                zone_id=zone_id,
+            )
+            state = svc.state_service.get_object_state(
+                object_name=object_name,
+                camera_id=camera_id,
+                zone_id=zone_id,
+            )
+        state["reason_code"] = reason_code
+        return build_success(
+            summary=f"Object state refreshed for {object_name}",
+            data=state,
+            source_layer="mcp.tools.state",
+            trace_id=trace_id,
+            confidence=self._to_float(state.get("state_confidence")),
+            fresh_until=state.get("fresh_until"),
+            is_stale=bool(state.get("is_stale", 0)),
+        )
+
+    def _refresh_zone_state(self, payload: dict[str, Any]) -> dict[str, Any]:
+        trace_id = self._as_text(payload.get("trace_id"))
+        camera_id = require_non_empty(self._as_text(payload.get("camera_id")), "camera_id")
+        zone_id = require_non_empty(self._as_text(payload.get("zone_id")), "zone_id")
+        with self._runtime.services() as svc:
+            _, reason_code = svc.state_service.refresh_zone_state(camera_id=camera_id, zone_id=zone_id)
+            state = svc.state_service.get_zone_state(camera_id=camera_id, zone_id=zone_id)
+        state["reason_code"] = reason_code
+        return build_success(
+            summary=f"Zone state refreshed for {camera_id}/{zone_id}",
+            data=state,
+            source_layer="mcp.tools.state",
+            trace_id=trace_id,
+            confidence=self._to_float(state.get("state_confidence")),
+            fresh_until=state.get("fresh_until"),
+            is_stale=bool(state.get("is_stale", 0)),
+        )
+
     def _get_world_state(self, payload: dict[str, Any]) -> dict[str, Any]:
         trace_id = self._as_text(payload.get("trace_id"))
         with self._runtime.services() as svc:
@@ -367,6 +435,19 @@ class MCPToolRegistry:
             summary=f"Device status loaded for {device_id}",
             data=status,
             source_layer="mcp.tools.device",
+            trace_id=trace_id,
+        )
+
+    def _audit_recent_access(self, payload: dict[str, Any]) -> dict[str, Any]:
+        trace_id = self._as_text(payload.get("trace_id"))
+        limit = self._to_limit(payload.get("limit"), default=20, max_limit=200)
+        with self._runtime.services() as svc:
+            rows = svc.audit_repo.list_recent(limit=limit)
+        items = [asdict(row) for row in rows]
+        return build_success(
+            summary=f"Loaded {len(items)} audit records",
+            data={"items": items},
+            source_layer="mcp.tools.security",
             trace_id=trace_id,
         )
 

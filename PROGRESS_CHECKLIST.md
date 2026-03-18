@@ -47,6 +47,25 @@
 - [x] Prompt16-Hotfix 修复 take_snapshot 外键错误（兼容 `device_id` 误传 `camera_id`，拒绝审计仅写合法 `device_id`，`test_device_service` + 当前环境实测通过，2026-03-15）
 - [x] Prompt16-Hotfix RKNN 标签与模型分类对齐（默认 `EDGE_RKNN_LABELS` 切换 COCO80，`rknn_detector` 默认/空值回退同步，RK3566 实机 `run-once` 验证 `detector_error=null`，2026-03-15）
 - [x] Prompt-Doc README 对齐计划书与现状能力（补充“计划书与当前项目差异”章节，2026-03-17）
+- [x] Prompt-Doc 修复1 文档价值提炼与执行化（新增 `docs/edge/修复1整理版.md`，补充验证清单/提示词模板/打勾映射并保留原文，2026-03-17）
+- [x] Prompt-Repair A包分段时延补齐 `emit_ms`（`edge_device/api/server.py` 增加 `timings_ms.emit_ms`，并补 `tests/unit/test_edge_runtime.py` 断言，2026-03-17）
+- [x] Prompt-Repair A包事件压缩稳定化与可配置化（`event_compressor` 增加签名缓存回收/上限与 `EDGE_ANALYSIS_OCR_CLASSES`；`start_edge.sh` 同步导出；新增 `tests/unit/test_event_compressor.py`，2026-03-17）
+- [x] Prompt-Repair A包跟踪稳定化（`tracker` 支持跨区 ID 连续匹配与 zone 边界防抖；`start_edge.sh` 增加 `EDGE_TRACK_ZONE_SWITCH_MARGIN`；新增 `tests/unit/test_tracker.py`，2026-03-17）
+- [x] Prompt-Repair B包状态与策略口径收敛（`state_service/policy_service` 新增 `freshness_level` 与 `reason_codes`，并补 unit/integration 断言，2026-03-17）
+- [x] Prompt-Repair C包 analysis_requests 通用后端分发（`perception_service` 新增 `scene_recheck/object_state_recheck/zone_state_recheck` dispatcher 与 state 回流，`dependencies` 注入 `StateService`，补 schema/protocol 与 integration 回归，2026-03-17）
+- [x] Prompt-Repair D包 MCP/Skill/Telegram 收口（`reply_service` 文本路由固定到 scene/history/last_seen/object_state/zone_state 工具链并统一输出结构；`access.yaml` 放通 `evaluate_staleness`；补 e2e 文本路由用例，2026-03-17）
+- [x] Prompt-Repair 板端 RKNN 解释器自动选择修复（`start_edge.sh` 自动优先可导入 `rknnlite` 的 Python 解释器并打印运行时状态，修复默认 `python3` 回退 stub 问题，2026-03-17）
+- [x] Prompt-Repair OIV7 RKNN 单输出解码与标签路径修复（`rknn_detector` 新增 YOLOv8 flat-output 解码与全零分类头防误报，`start_edge.sh` 新增 `EDGE_RKNN_LABELS_PATH` 自动指向 `config/labels/openimages_v7_601.txt`，RK3566 实机 `run-once` 验证通过且不再出现 `banana/teddy bear` 假阳性，2026-03-18）
+- [x] Prompt-Repair RKNN 分类结果被压缩层阈值误过滤修复（`EdgeDeviceRuntime` 自动让 `EventCompressor.min_confidence` 跟随 detector 阈值；新增 `test_event_compressor_follows_detector_threshold`；RK3566 实机 `EDGE_DETECT_MIN_CONFIDENCE=0.25` 连跑验证 `object_detected + raw_detections` 正常，2026-03-18）
+- [x] Prompt-Repair SD 卡挂载并迁移非模型数据（仅迁移 `logs/snapshots/clips/pending_events` 到 `/mnt/sdcard/nano-vision-butler`，模型仍在内置盘；`/etc/fstab` 持久化挂载，2026-03-18）
+- [x] Prompt-Repair 默认检测阈值优化（`scripts/start_edge.sh` 默认 `EDGE_DETECT_MIN_CONFIDENCE` 从 `0.35` 调整为 `0.20`，RK3566 实机 15 次对比识别命中率由 `2/15` 提升到 `7/15`，2026-03-18）
+- [x] Prompt-Repair 默认模型切换为 600 类 OIV7（`scripts/start_edge.sh` 默认 `EDGE_RKNN_MODEL_PATH` 切换到 `yolov8n_oiv7_nosigmoid_i8_rk3566.rknn`，RK3566 无额外模型环境变量 `run-once` 实机验证已生效并自动加载 `openimages_v7_601.txt`，2026-03-18）
+- [x] Prompt-Repair OIV7 600 类白名单裁剪到室内 100 类（新增 `EDGE_DETECT_CLASS_ALLOWLIST_PATH/EDGE_DETECT_CLASS_ALLOWLIST` 与 `config/labels/openimages_indoor_100.txt`，`run-once` 实机链路启用验证通过，2026-03-18）
+- [x] Prompt-Delivery 计划书按当前可用版落地（新增 `docs/PLAN_CURRENT_AVAILABLE_V1.md`，并在 `README.md` 增加入口，统一“当前可交付/缺口/验收”口径；`pytest -q tests/integration/test_device_event_flow.py tests/integration/test_object_state_flow.py tests/integration/test_zone_state_flow.py tests/integration/test_stale_fallback_flow.py tests/integration/test_mcp_tools.py` = 9 passed，`pytest -q tests/e2e/test_current_scene_query.py tests/e2e/test_last_seen_query.py tests/e2e/test_object_state_query.py` = 6 passed，2026-03-18）
+- [x] Prompt-Delivery MCP 缺口补齐与执行文档落地（新增 `refresh_object_state/refresh_zone_state/audit_recent_access` tools 与 `resource://security/access_scope`；同步 `config/access.yaml` + `config/runtime/access.yaml`；新增 `docs/PLAN_MCP_GAP_EXECUTION_V1.md`；`pytest -q tests/integration/test_mcp_tools.py`=2 passed，`pytest -q tests/integration/test_access_control_flow.py`=3 passed，2026-03-18）
+- [x] Prompt-Delivery 主动通知最小闭环落地（新增 `notification_rule_repo + notification_service`，`ingest_event` 接入规则触发/冷却节流/审计，新增 `docs/NOTIFICATION_LOOP_V1.md`；`pytest -q tests/integration/test_device_event_flow.py`=5 passed，`pytest -q tests/integration/test_access_control_flow.py tests/integration/test_mcp_tools.py`=5 passed，2026-03-18）
+- [x] Prompt-Delivery 5秒边端检测 + 30秒Q8后端分析链路（`event_compressor` 新增 `vision_q8_describe` 30s 节流；新增 `vision_analysis_service` 并接入 `perception_service`；协议/schema/启动脚本/README/计划书同步；`pytest -q tests/unit/test_vision_analysis_service.py tests/integration/test_device_event_flow.py tests/unit/test_event_compressor.py tests/integration/test_edge_event_quality.py tests/unit/test_edge_protocol_schemas.py` = 19 passed，2026-03-18）
+- [x] Prompt-Doc 当前环境真实链路核验结论回写 README（仅基于数据库/日志/会话结构化证据，不看图片；补充“23:16 +08”观测、分析成败比、服务在线探测口径，2026-03-18）
 
 ## B. TASKS 任务清单（T0-T16 + T13A-T13I）
 - [x] T0 仓库初始化与约束固化
@@ -93,6 +112,25 @@
 - [x] T17-Hotfix 修复 `take_snapshot` 外键失败（`device_service` 兼容 camera_id/device_id 混用；拒绝审计写入前归一化 device_id，未知设备写 null 防 FK；单测与实链路复测通过，2026-03-15）
 - [x] T17-Hotfix RKNN 标签对齐 COCO80（`scripts/start_edge.sh` 默认标签改为 COCO80，`edge_device/inference/rknn_detector.py` 默认与空值回退改为 COCO80；`pytest -q tests/unit/test_rknn_detector.py tests/unit/test_edge_runtime.py tests/unit/test_edge_capture.py` 通过；RK3566 实机复测通过，2026-03-15）
 - [x] T-Doc README 对齐计划书与现状能力（README 增加“计划书与当前项目差异”，2026-03-17）
+- [x] T-Doc 修复1 文档收敛与索引同步（新增 `docs/edge/修复1整理版.md` 并同步 `docs/edge/testing_index.md`，2026-03-17）
+- [x] T-Repair A包分段时延补齐 `emit_ms`（run_once 时延口径补齐 emit 阶段，unit+integration 回归通过，2026-03-17）
+- [x] T-Repair A包事件压缩稳定化与可配置化（edge 去重签名缓存有界 + OCR 类别白名单配置化 + 相关 unit/integration 回归通过，2026-03-17）
+- [x] T-Repair A包跟踪稳定化（跨区 ID 连续与 zone 防抖落地，相关 unit/integration 回归通过，2026-03-17）
+- [x] T-Repair B包状态与策略口径收敛（state/policy 输出结构补齐 freshness 与 reason 聚合，相关 unit/integration/mcp 回归通过，2026-03-17）
+- [x] T-Repair C包 analysis_requests 通用后端分发（新增 state recheck 类型分发与状态回流，`test_device_event_flow`/`test_edge_protocol_schemas` 扩展，相关回归 32 项通过，2026-03-17）
+- [x] T-Repair D包 MCP/Skill/Telegram 收口（文本问答固定工具链 + 统一回复模板，`test_current_scene_query`/`test_last_seen_query`/`test_object_state_query` 新增文本路由断言，验证清单与 smoke/run-once 通过，2026-03-17）
+- [x] T-Repair 板端 RKNN 解释器自动选择修复（`scripts/start_edge.sh` 新增 rknnlite 解释器探测与自动切换，实机验证模型版本恢复 `yolov8n_rockchip_opt_i8_rk3566`，2026-03-17）
+- [x] T-Repair OIV7 RKNN 可用性修复（新增 OIV7 601 类标签文件、`EDGE_RKNN_LABELS_PATH` 自动装配、YOLOv8 单输出解码与全零分类头防误报；`pytest tests/unit/test_rknn_detector.py` 通过，RK3566 实机 `run-once` 通过，2026-03-18）
+- [x] T-Repair RKNN 事件压缩阈值与检测阈值对齐（`edge_device/api/server.py` 注入 detector min_confidence 到 `EventCompressor`，修复 `detections>0` 但 `raw_detections=[]`；`pytest tests/unit/test_edge_runtime.py` 通过，RK3566 实机 `run_once` 连跑验证通过，2026-03-18）
+- [x] T-Repair SD 卡非运行数据卸载（挂载 `mmcblk1p1` 到 `/mnt/sdcard`，并将 edge 日志/快照/clip/pending 迁移为软链；模型目录不迁移，2026-03-18）
+- [x] T-Repair RKNN 默认阈值优化（`scripts/start_edge.sh` 默认检测阈值降至 `0.20` 并完成 RK3566 真实环境 AB 对比验证，2026-03-18）
+- [x] T-Repair 默认切换 600 类 OIV7 模型（`scripts/start_edge.sh` 默认模型路径改为 `yolov8n_oiv7_nosigmoid_i8_rk3566.rknn`，`start_edge.sh run-once` 实机确认默认路径与 OIV7 标签自动装配，2026-03-18）
+- [x] T-Repair OIV7 600 类按场景白名单裁剪（`edge_device/api/server.py` 增加检测类别 allowlist 过滤，`scripts/start_edge.sh` 导出 allowlist 变量，新增 `tests/unit/test_edge_runtime.py::test_class_allowlist_filters_detector_output`，RK3566 实机 `run-once` 验证通过，2026-03-18）
+- [x] T18 计划书当前可用版落地（新增 `docs/PLAN_CURRENT_AVAILABLE_V1.md`，`README.md` 增加入口，`TASKS.md/PROGRESS_CHECKLIST.md` 同步打勾；集成主链 9 passed + e2e 6 passed，2026-03-18）
+- [x] T19 MCP 计划书缺口补齐（`src/mcp_server/tools/registry.py` 新增 `refresh_*`/`audit_recent_access`，`src/mcp_server/resources/registry.py` 新增 `resource://security/access_scope`，配置 allowlist 同步；`tests/integration/test_mcp_tools.py` 与 `tests/integration/test_access_control_flow.py` 回归通过，2026-03-18）
+- [x] T20 主动通知最小闭环落地（`src/services/notification_service.py` + `src/db/repositories/notification_rule_repo.py` + `src/services/perception_service.py` 联动，规则触发/冷却节流/审计闭环落地；相关集成测试通过，2026-03-18）
+- [x] T21 5秒边端人体检测 + 30秒Q8后端分析链路落地（新增 `vision_q8_describe` request/dispatcher/service，写入 `events`+`audit_logs`；`start_edge.sh`/`start_backend.sh` 默认参数补齐；19 项回归通过，2026-03-18）
+- [x] T-Doc 当前环境真实链路核验结论回写 README（仅结构化证据，补充链路实况与时间戳口径，2026-03-18）
 
 ## C. 验收打勾规则
 - [ ] 目标文件已创建或修改正确

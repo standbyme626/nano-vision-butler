@@ -43,6 +43,23 @@ class EdgeProtocolSchemaTests(unittest.TestCase):
                 "input_uri": "file:///tmp/package.jpg",
                 "object_class": "package",
                 "track_id": "trk-001",
+            },
+            {
+                "type": "scene_recheck",
+                "reason": "state_refresh_needed",
+                "object_name": "package",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+            },
+            {
+                "type": "vision_q8_describe",
+                "reason": "person_periodic_q8",
+                "input_uri": "file:///tmp/person.jpg",
+                "object_class": "person",
+                "object_name": "person",
+                "track_id": "trk-vision-1",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
             }
         ]
         self._validate(schema_name="edge_event_envelope.schema.json", payload=payload)

@@ -908,6 +908,234 @@
 
 ---
 
+## T17-Hotfix 分段性能优化与横向对比口径统一
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix 切换 Rockchip 优化版 YOLOv8n INT8 并完成实机复测
+
+### 目标
+把 `run_once` 的性能拆成可稳定对比的分段指标，并支持“上传异步化 + 快照可关闭”的压测模式，保证横向对比同口径。
+
+### 输出
+- `edge_device/api/server.py`（新增 `timings_ms` 分段字段，支持 `EDGE_BACKEND_POST_MODE`、`EDGE_BACKEND_POST_QUEUE_MAX`、`EDGE_RUN_ONCE_SNAPSHOT_MODE`）
+- `scripts/start_edge.sh`（新增上述开关与日志打印）
+- `scripts/rknn/run_infer_benchmark.sh`（改为单进程循环，输出 `avg_capture_ms`、`avg_detector_infer_ms`、`avg_total_ms` 等均值）
+- `edge_device/capture/v4l2_camera.py`（`v4l2` 路径改为单次 snapshot，去除重复预抓拍开销）
+- `tests/unit/test_edge_runtime.py`（异步上传与 run_once 分段字段回归）
+- `tests/unit/test_rknn_detector.py`（RKOPT 9 路输出解码回归，`cv2` 缺失时 PIL 兜底）
+- `logs/rk3566_bench_20260315/*.log`（RK3566 实机横向对比留档）
+
+### 验收
+- `run_once` 响应包含 `timings_ms.capture_ms/detector_infer_ms/total_ms`
+- `EDGE_BACKEND_POST_MODE=async` 下 `run_once` 可返回 `event_queued=true`
+- 基准脚本输出包含 `avg_capture_ms` 与 `avg_total_ms`
+- RK3566 实机端到端性能较优化前（~2.4 FPS）有明确提升（~4.6~4.8 FPS）
+- 单测通过：`pytest -q tests/unit/test_edge_capture.py tests/unit/test_rknn_detector.py tests/unit/test_edge_runtime.py`
+
+---
+
+## T17-Hotfix 当前环境分析链路改造（抓拍→场景描述→结构化结论）
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix 分段性能优化与横向对比口径统一
+
+### 目标
+将 Telegram 文本“当前环境”查询从“仅历史事件拼接”升级为“实时抓拍 + 场景工具描述 + 结构化结论”，并保留抓拍失败时的历史回退路径。
+
+### 输出
+- `src/services/reply_service.py`（新增 scene intent 分流；文本场景链路改为 `take_snapshot -> describe_scene -> structured response`；失败回退 `get_world_state + query_recent_events`）
+- `config/access.yaml`（`mcp_tool_allowlist` 与 `tool_allowlist_per_skill.telegram` 增加 `describe_scene`）
+- `config/runtime/access.yaml`（同上）
+- `tests/e2e/test_current_scene_query.py`（断言更新为结构化结论格式）
+
+### 验收
+- 发送“现在门口什么情况/分析当前环境”等文本时，返回内容包含结构化结论、快照信息、场景状态与最近事件
+- `take_snapshot` 失败时不会整条请求失败，返回历史证据回退结果
+- 回归通过：`pytest -q tests/e2e/test_current_scene_query.py tests/integration/test_telegram_message_flow.py tests/e2e/test_take_snapshot_command.py`
+
+---
+
+## T17-Hotfix 修复 take_snapshot 外键失败（camera_id/device_id 兼容 + 审计防 FK）
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix 当前环境分析链路改造（抓拍→场景描述→结构化结论）
+
+### 目标
+修复“当前环境”链路中 `take_snapshot` 在设备标识混用时触发的 `FOREIGN KEY constraint failed`，保证抓拍可成功，且拒绝审计日志不再因非法 `device_id` 失败。
+
+### 输出
+- `src/services/device_service.py`
+  - `_resolve_device` 兼容 `device_id` 误传 `camera_id`（按 camera 反查设备）
+  - 失败审计前执行 `device_hint -> device_id` 归一化，未知设备写 `null`
+  - `take_snapshot/get_recent_clip` deny 审计 `meta` 增加 `device_hint`
+- `tests/unit/test_device_service.py`
+  - 新增 camera_id/device_id 混用成功抓拍测试
+  - 新增未知设备拒绝审计不触发 FK 测试
+
+### 验收
+- `POST /device/command/take-snapshot` 传 `{"device_id":"cam-entry-01"}` 返回成功
+- 不存在设备标识时返回 `DEVICE_NOT_FOUND`，且不再抛出 `FOREIGN KEY constraint failed`
+- 通过：`pytest -q tests/unit/test_device_service.py`
+- 通过：`pytest -q tests/e2e/test_current_scene_query.py tests/e2e/test_take_snapshot_command.py tests/integration/test_telegram_message_flow.py`
+- 实链路复测：`nanobot agent` 触发 `take_snapshot({"device_id":"cam-entry-01"})` 成功（会话 `cli_env-now-fix`）
+
+---
+
+## T17-Hotfix RKNN 标签对齐 COCO80（模型分类映射修正）
+状态：DONE（2026-03-15）
+优先级：P1
+依赖：T17-Hotfix 修复 take_snapshot 外键失败（camera_id/device_id 兼容 + 审计防 FK）
+
+### 目标
+修复 RKNN 模型类别数（80 类）与默认标签（3 类）不一致的问题，避免类别名映射错误。
+
+### 输出
+- `scripts/start_edge.sh`
+  - 默认 `EDGE_RKNN_LABELS` 从 `person,package,car` 改为 COCO80 顺序
+- `edge_device/inference/rknn_detector.py`
+  - 增加 `COCO80_LABELS` 常量
+  - `RKNNDetectorConfig.labels` 默认值改为 COCO80
+  - `create_rknn_detector_from_env` 默认标签改为 COCO80
+  - `_parse_labels` 在空输入时回退 COCO80（不再回退单类 `person`）
+- `tests/unit/test_rknn_detector.py`
+  - 新增空标签环境变量回退 COCO80 断言（长度 80）
+- `docs/edge/model_deploy.md` / `docs/edge/model_ab_test_matrix.md`
+  - 默认标签说明与示例同步为 COCO80
+
+### 验收
+- `pytest -q tests/unit/test_rknn_detector.py` 通过
+- `pytest -q tests/unit/test_edge_runtime.py tests/unit/test_edge_capture.py` 通过
+- RK3566 实机（`/root/.venv_rknn/bin/python`）`run-once` 输出：
+  - `model_version=yolov8n_rockchip_opt_i8_rk3566`
+  - `detector_error=null`
+  - `RKNN labels` 日志为 COCO80 列表
+
+---
+
+## T18 计划书当前可用版落地（文档与验收口径收敛）
+状态：DONE（2026-03-18）
+优先级：P1
+依赖：T17-Hotfix RKNN 标签对齐 COCO80（模型分类映射修正）
+
+### 目标
+把 `计划书.md` 的完整目标收敛为“当前硬件 + 当前仓库可稳定交付”的执行基线，统一后续推进口径。
+
+### 输出
+- `docs/PLAN_CURRENT_AVAILABLE_V1.md`
+  - 明确“当前可交付能力 / 当前缺口 / 最小验收清单 / V2 下一步”
+- `README.md`
+  - 新增“计划书当前可用版”入口说明
+- `PROGRESS_CHECKLIST.md`
+  - 同步 A/B 勾选记录，避免任务状态漂移
+
+### 验收
+- 可直接回答“当前计划书做到哪一层”并给出固定证据路径
+- 研发、测试、部署按同一份 V1 清单执行，不再口径漂移
+- 文档中明确区分“当前可交付”与“下一阶段补齐项”
+
+---
+
+## T19 MCP 计划书缺口补齐（tools/resources + 配置 + 验收文档）
+状态：DONE（2026-03-18）
+优先级：P1
+依赖：T18
+
+### 目标
+补齐计划书中已识别的 MCP 缺口，并把“补齐后计划书贴合度”固化成可执行文档。
+
+### 输出
+- `src/mcp_server/tools/registry.py`
+  - 新增 `refresh_object_state`
+  - 新增 `refresh_zone_state`
+  - 新增 `audit_recent_access`
+- `src/mcp_server/resources/registry.py`
+  - 新增 `resource://security/access_scope`
+- `config/access.yaml` 与 `config/runtime/access.yaml`
+  - 同步放通新 tool/resource
+- `tests/integration/test_mcp_tools.py`
+  - 新增工具/资源枚举与调用断言
+- `docs/PLAN_MCP_GAP_EXECUTION_V1.md`
+  - 固化“前后差异 + 完成度口径 + 验收命令”
+
+### 验收
+- `pytest -q tests/integration/test_mcp_tools.py` 通过
+- `pytest -q tests/integration/test_access_control_flow.py` 通过
+- `python -m src.mcp_server.server --config-dir config list` 可见新增 tool/resource
+- `call-tool refresh_* / audit_recent_access` 与 `read-resource resource://security/access_scope` 可返回成功结构
+
+---
+
+## T20 主动通知最小闭环落地（规则触发 + 去重节流 + 审计）
+状态：DONE（2026-03-18）
+优先级：P1
+依赖：T19
+
+### 目标
+把 `notification_rules` 从“仅有表结构”推进到“真实事件链路可执行的通知决策闭环”。
+
+### 输出
+- `src/db/repositories/notification_rule_repo.py`
+  - 活跃规则读取（`active_notification_rules_view`）
+  - `last_triggered_at` 更新
+  - 每小时触发次数统计
+- `src/services/notification_service.py`
+  - 规则匹配（`event_type/object_name/zone_id/min_importance`）
+  - cooldown 与 `max_per_hour` 节流
+  - 通知决策审计（`notification_dispatch`）
+- `src/services/perception_service.py`
+  - `ingest_event` 返回 `notifications` 结果
+- `tests/integration/test_device_event_flow.py`
+  - 新增“首条触发 + 第二条 cooldown 抑制 + 审计落库”用例
+- `docs/NOTIFICATION_LOOP_V1.md`
+  - 本次闭环范围、返回结构、验收命令
+
+### 验收
+- `pytest -q tests/integration/test_device_event_flow.py` 通过
+- `pytest -q tests/integration/test_access_control_flow.py tests/integration/test_mcp_tools.py` 通过
+- `/device/ingest/event` 响应包含 `notifications` 字段并体现 `triggered/skipped` 结果
+- `audit_logs` 中存在 `action='notification_dispatch'` 的 allow/deny 记录
+
+---
+
+## T21 5秒边端人体检测 + 30秒Q8后端分析链路落地
+状态：DONE（2026-03-18）
+优先级：P1
+依赖：T20
+
+### 目标
+将“前端每 5 秒一次检测与上报”和“后端 Q8 图像分析每 30 秒一次”接入同一正式链路，并完成文档与测试验收。
+
+### 输出
+- `edge_device/compression/event_compressor.py`
+  - 新增 `vision_q8_describe` analysis request 生成
+  - 新增按 camera 维度 `EDGE_ANALYSIS_Q8_INTERVAL_SEC=30` 节流
+  - 保持 edge 主循环 `EDGE_INTERVAL_SEC=5` 口径
+- `src/services/vision_analysis_service.py`
+  - 新增 Q8 后端分析服务（stub/ollama 双模式）
+  - 结果写入 `events`，动作写入 `audit_logs`
+- `src/services/perception_service.py` + `src/dependencies.py`
+  - analysis dispatcher 接入 `vision_q8_describe`
+- `schemas/edge_event_envelope.schema.json` + `docs/edge/protocol.md`
+  - 协议枚举新增 `vision_q8_describe`
+- `scripts/start_edge.sh` + `scripts/start_backend.sh`
+  - 新增 Q8 相关环境变量并打印运行参数
+- `tests/unit/test_event_compressor.py`
+  - 新增 Q8 30s 节流单测
+- `tests/unit/test_vision_analysis_service.py`
+  - 新增 Q8 服务入库与审计单测
+- `tests/integration/test_device_event_flow.py`
+  - 新增 `vision_q8_describe` 端到端分发用例
+- `tests/integration/test_edge_event_quality.py` / `tests/unit/test_edge_protocol_schemas.py`
+  - 新增 Q8 request 协议与压缩行为用例
+
+### 验收
+- `pytest -q tests/unit/test_vision_analysis_service.py tests/integration/test_device_event_flow.py tests/unit/test_event_compressor.py tests/integration/test_edge_event_quality.py tests/unit/test_edge_protocol_schemas.py` 通过
+- `analysis_requests` 中可见 `vision_q8_describe`
+- 后端入库存在 `event_type='vision_q8_described'` 记录
+- `audit_logs` 存在 `action='vision_q8_describe'` 记录
+
+---
+
 ## 推荐并行方式
 
 ### A 线：数据与事实层

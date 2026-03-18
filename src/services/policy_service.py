@@ -52,13 +52,14 @@ class PolicyService:
     ) -> dict[str, Any]:
         recency_class = query_recency_class if query_recency_class in {"realtime", "recent", "historical"} else "recent"
         evaluated_at = normalize_iso8601(now, "now") if now else utc_now_iso8601()
+        now_dt = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00")).astimezone(timezone.utc)
         grace_sec = int(self._config.policies.get("stale", {}).get("stale_grace_sec", 0))
         fallback_enabled = bool(self._config.policies.get("fallback", {}).get("enable_recheck_snapshot", False))
 
+        fresh_dt: datetime | None = None
         if fresh_until:
             normalized_fresh_until = normalize_iso8601(fresh_until, "fresh_until")
             fresh_dt = datetime.fromisoformat(normalized_fresh_until.replace("Z", "+00:00")).astimezone(timezone.utc)
-            now_dt = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00")).astimezone(timezone.utc)
             is_stale = now_dt > (fresh_dt + timedelta(seconds=grace_sec))
         else:
             normalized_fresh_until = None
@@ -85,9 +86,19 @@ class PolicyService:
         elif device == "degraded":
             reason_code = "device_degraded"
 
+        freshness_level = self._classify_freshness_level(
+            fresh_dt=fresh_dt,
+            now_dt=now_dt,
+            is_stale=is_stale,
+            grace_sec=grace_sec,
+        )
+        seconds_to_fresh_until = int((fresh_dt - now_dt).total_seconds()) if fresh_dt is not None else None
+
         return {
             "fresh_until": normalized_fresh_until,
             "is_stale": is_stale,
+            "freshness_level": freshness_level,
+            "seconds_to_fresh_until": seconds_to_fresh_until,
             "fallback_required": fallback_required,
             "reason_code": reason_code,
             "recency_class": recency_class,
@@ -127,12 +138,35 @@ class PolicyService:
             device_status=device_status,
             now=now,
         )
+        state_reason_code = state.get("reason_code", "state_unavailable")
+        policy_reason_code = decision.get("reason_code", "policy_unavailable")
         return {
             "object_name": object_name,
             "camera_id": resolved_camera_id,
             "zone_id": state.get("zone_id") or zone_id,
             "state_value": state.get("state_value", "unknown"),
-            "state_reason_code": state.get("reason_code", "state_unavailable"),
+            "state_reason_code": state_reason_code,
+            "state_freshness_level": state.get("freshness_level", "unknown"),
+            "reason_codes": {
+                "state": state_reason_code,
+                "policy": policy_reason_code,
+            },
             **decision,
         }
 
+    @staticmethod
+    def _classify_freshness_level(
+        *,
+        fresh_dt: datetime | None,
+        now_dt: datetime,
+        is_stale: bool,
+        grace_sec: int,
+    ) -> str:
+        if fresh_dt is None:
+            return "unknown"
+        if is_stale:
+            return "stale"
+        remaining_sec = (fresh_dt - now_dt).total_seconds()
+        if remaining_sec <= max(grace_sec, 30):
+            return "aging"
+        return "fresh"

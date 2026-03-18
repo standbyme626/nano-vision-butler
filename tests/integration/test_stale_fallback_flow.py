@@ -79,6 +79,9 @@ class StaleFallbackFlowIntegrationTests(unittest.TestCase):
         self.assertTrue(realtime_data["is_stale"])
         self.assertTrue(realtime_data["fallback_required"])
         self.assertEqual(realtime_data["reason_code"], "stale_requires_recheck")
+        self.assertEqual(realtime_data["freshness_level"], "stale")
+        self.assertIn("reason_codes", realtime_data)
+        self.assertEqual(realtime_data["reason_codes"]["policy"], "stale_requires_recheck")
 
         historical = self.client.get(
             "/policy/evaluate-staleness",
@@ -94,6 +97,7 @@ class StaleFallbackFlowIntegrationTests(unittest.TestCase):
         self.assertTrue(historical_data["is_stale"])
         self.assertFalse(historical_data["fallback_required"])
         self.assertEqual(historical_data["reason_code"], "stale_but_historical_allowed")
+        self.assertEqual(historical_data["freshness_level"], "stale")
 
 
 if __name__ == "__main__":

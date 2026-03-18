@@ -73,6 +73,7 @@ class ObjectStateFlowIntegrationTests(unittest.TestCase):
         self.assertEqual(first_data["object_name"], "package")
         self.assertEqual(first_data["state_value"], "present")
         self.assertEqual(first_data["reason_code"], "refreshed_from_observation")
+        self.assertIn(first_data["freshness_level"], {"fresh", "aging"})
 
         second = self.client.get(
             "/memory/object-state",
@@ -80,7 +81,7 @@ class ObjectStateFlowIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(second.status_code, 200)
         second_data = second.json()["data"]
-        self.assertEqual(second_data["reason_code"], "state_row_found")
+        self.assertIn(second_data["reason_code"], {"state_row_found", "state_row_found_stale"})
 
 
 if __name__ == "__main__":

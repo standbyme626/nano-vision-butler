@@ -6,7 +6,10 @@ import argparse
 import json
 import logging
 import os
+import queue
 import shutil
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -55,6 +58,9 @@ class EdgeDeviceConfig:
     capture_retry_delay_sec: float = 1.0
     capture_parallel: bool = True
     capture_parallel_wait_sec: float = 0.4
+    backend_post_mode: str = "sync"
+    backend_post_queue_max: int = 64
+    run_once_snapshot_mode: str = "sync"
     snapshot_dir: Path = field(default_factory=lambda: Path("./data/edge_device/snapshots"))
     clip_dir: Path = field(default_factory=lambda: Path("./data/edge_device/clips"))
     snapshot_buffer_size: int = 32
@@ -110,60 +116,179 @@ class EdgeDeviceRuntime:
             )
         self.detector = detector or create_detector_from_env()
         self.tracker = tracker or LightweightTracker()
-        self.compressor = compressor or EventCompressor()
+        if compressor is not None:
+            self.compressor = compressor
+        else:
+            self.compressor = EventCompressor(
+                min_confidence=self._detector_min_confidence(self.detector),
+            )
         self.cache = cache or MediaRingBuffer(
             snapshot_capacity=config.snapshot_buffer_size,
             clip_capacity=config.clip_buffer_size,
         )
         self.heartbeat_builder = heartbeat_builder or HeartbeatBuilder(model_version=self.detector.model_version)
+        (
+            self._detect_class_allowlist,
+            self._detect_class_allowlist_source,
+        ) = self._resolve_detection_class_allowlist()
+        if self._detect_class_allowlist is not None:
+            LOGGER.info(
+                "detector class allowlist enabled: size=%s source=%s",
+                len(self._detect_class_allowlist),
+                self._detect_class_allowlist_source or "env",
+            )
         self._event_seq_no = 0
+        self._pending_lock = threading.Lock()
+        self._backend_post_mode = (config.backend_post_mode or "sync").strip().lower()
+        self._async_queue: queue.Queue[dict[str, Any]] | None = None
+        self._async_stop_event: threading.Event | None = None
+        self._async_thread: threading.Thread | None = None
+        self._last_async_error: str | None = None
+        if self._backend_post_mode == "async":
+            self._start_async_uploader()
         self.config.pending_event_dir.mkdir(parents=True, exist_ok=True)
 
     def __del__(self) -> None:  # pragma: no cover - defensive cleanup path
         try:
-            if isinstance(self.camera, LatestFramePrefetchCamera):
-                self.camera.stop()
+            self.close()
         except Exception:
             return
 
+    def close(self) -> None:
+        self._stop_async_uploader()
+        try:
+            if isinstance(self.camera, LatestFramePrefetchCamera):
+                self.camera.stop()
+        except Exception:
+            pass
+
+    def _start_async_uploader(self) -> None:
+        queue_size = max(int(self.config.backend_post_queue_max), 1)
+        self._async_queue = queue.Queue(maxsize=queue_size)
+        self._async_stop_event = threading.Event()
+        self._async_thread = threading.Thread(
+            target=self._async_uploader_loop,
+            name="edge-backend-uploader",
+            daemon=True,
+        )
+        self._async_thread.start()
+        LOGGER.info("backend async uploader enabled: queue_max=%s", queue_size)
+
+    def _stop_async_uploader(self) -> None:
+        if self._async_stop_event is None:
+            return
+        self._async_stop_event.set()
+        if self._async_thread is not None:
+            self._async_thread.join(timeout=1.0)
+        self._async_thread = None
+        self._async_stop_event = None
+
+    def _async_uploader_loop(self) -> None:
+        if self._async_queue is None or self._async_stop_event is None:
+            return
+        while not self._async_stop_event.is_set():
+            try:
+                payload = self._async_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                backend_response = self.backend_client.post_event(payload)
+                if not self._is_backend_ack(backend_response):
+                    self._last_async_error = self._as_optional_text(backend_response.get("error")) or "async_upload_failed"
+                    self._enqueue_pending_event(payload)
+            except Exception as exc:  # pragma: no cover - defensive network boundary
+                self._last_async_error = f"async_upload_exception:{exc}"
+                self._enqueue_pending_event(payload)
+            finally:
+                self._async_queue.task_done()
+
+    @staticmethod
+    def _detector_min_confidence(detector: DetectorProtocol) -> float | None:
+        direct = getattr(detector, "min_confidence", None)
+        if isinstance(direct, (int, float)):
+            return max(0.0, min(1.0, float(direct)))
+        config = getattr(detector, "config", None)
+        nested = getattr(config, "min_confidence", None)
+        if isinstance(nested, (int, float)):
+            return max(0.0, min(1.0, float(nested)))
+        return None
+
     def run_once(self, *, trace_id: str | None = None) -> dict[str, Any]:
+        total_start = time.perf_counter()
+        capture_start = time.perf_counter()
         frame = self.camera.capture_latest_frame()
-        detections = self.tracker.assign_tracks(self.detector.detect(frame))
+        capture_ms = (time.perf_counter() - capture_start) * 1000.0
+
+        detect_start = time.perf_counter()
+        raw_detections = self.detector.detect(frame)
+        filtered_detections = self._filter_detections_by_class(raw_detections)
+        detections = self.tracker.assign_tracks(filtered_detections)
+        detect_total_ms = (time.perf_counter() - detect_start) * 1000.0
+        detector_profile = getattr(self.detector, "last_profile", None)
         detector_error = self._as_optional_text(getattr(self.detector, "last_error", None))
         if detector_error:
             LOGGER.warning("Detector degraded for %s/%s: %s", self.config.device_id, self.config.camera_id, detector_error)
-        snapshot = self._store_snapshot(frame)
-        self.cache.add_snapshot(snapshot)
 
+        snapshot_start = time.perf_counter()
+        snapshot_uri: str | None = None
+        if self._run_once_snapshot_enabled():
+            snapshot = self._store_snapshot(frame)
+            self.cache.add_snapshot(snapshot)
+            snapshot_uri = snapshot.uri
+        else:
+            self._cleanup_frame_artifacts(frame)
+        snapshot_ms = (time.perf_counter() - snapshot_start) * 1000.0
+
+        compress_start = time.perf_counter()
         envelope = self.compressor.build_envelope(
             device_id=self.config.device_id,
             camera_id=self.config.camera_id,
             seq_no=self._next_event_seq_no(),
             frame=frame,
             detections=detections,
-            snapshot_uri=snapshot.uri,
+            snapshot_uri=snapshot_uri,
             model_version=self.detector.model_version,
             trace_id=trace_id,
             detector_error=detector_error,
         )
-        backend_response = self.backend_client.post_event(envelope["payload"])
-        event_queued = False
-        if not self._is_backend_ack(backend_response):
-            self._enqueue_pending_event(envelope["payload"])
-            event_queued = True
+        compress_ms = (time.perf_counter() - compress_start) * 1000.0
+
+        upload_start = time.perf_counter()
+        backend_response, event_queued = self._post_event_with_mode(envelope["payload"])
+        upload_ms = (time.perf_counter() - upload_start) * 1000.0
+        emit_ms = upload_ms
+        total_ms = (time.perf_counter() - total_start) * 1000.0
+
         return {
             "ok": True,
             "type": "edge_run_once",
             "data": {
                 "frame_id": frame.frame_id,
                 "detections": len(detections),
+                "detections_raw": len(raw_detections),
+                "detections_filtered": len(detections),
                 "model_version": self.detector.model_version,
                 "detector_error": detector_error,
-                "snapshot_uri": snapshot.uri,
+                "snapshot_uri": snapshot_uri,
                 "event_envelope": envelope,
                 "backend_response": backend_response,
                 "event_queued": event_queued,
                 "pending_event_count": self._pending_event_count(),
+                "timings_ms": {
+                    "capture_ms": round(capture_ms, 3),
+                    "detect_total_ms": round(detect_total_ms, 3),
+                    "detector_preprocess_ms": round(float((detector_profile or {}).get("preprocess_ms", 0.0)), 3),
+                    "detector_infer_ms": round(float((detector_profile or {}).get("infer_ms", 0.0)), 3),
+                    "detector_postprocess_ms": round(float((detector_profile or {}).get("postprocess_ms", 0.0)), 3),
+                    "snapshot_ms": round(snapshot_ms, 3),
+                    "compress_ms": round(compress_ms, 3),
+                    "upload_ms": round(upload_ms, 3),
+                    "emit_ms": round(emit_ms, 3),
+                    "total_ms": round(total_ms, 3),
+                },
+                "backend_post_mode": self._backend_post_mode,
+                "backend_async_queue_depth": self._async_queue.qsize() if self._async_queue is not None else 0,
+                "backend_async_last_error": self._last_async_error,
             },
         }
 
@@ -219,6 +344,55 @@ class EdgeDeviceRuntime:
             return None
         text = str(value).strip()
         return text or None
+
+    def _filter_detections_by_class(self, detections: list[Any]) -> list[Any]:
+        allowlist = self._detect_class_allowlist
+        if not allowlist:
+            return detections
+        filtered: list[Any] = []
+        for item in detections:
+            object_class = self._normalize_class_name(getattr(item, "object_class", ""))
+            object_name = self._normalize_class_name(getattr(item, "object_name", ""))
+            if object_class in allowlist or object_name in allowlist:
+                filtered.append(item)
+        dropped = len(detections) - len(filtered)
+        if dropped > 0:
+            LOGGER.debug("detector class allowlist dropped %s detections", dropped)
+        return filtered
+
+    def _resolve_detection_class_allowlist(self) -> tuple[set[str] | None, str | None]:
+        path_raw = (os.getenv("EDGE_DETECT_CLASS_ALLOWLIST_PATH") or "").strip()
+        csv_raw = (os.getenv("EDGE_DETECT_CLASS_ALLOWLIST") or "").strip()
+        normalized: set[str] = set()
+        source_parts: list[str] = []
+        if path_raw:
+            path = Path(path_raw)
+            if path.exists():
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    LOGGER.warning("failed to read allowlist path %s: %s", path, exc)
+                else:
+                    for line in content.splitlines():
+                        token = self._normalize_class_name(line)
+                        if token:
+                            normalized.add(token)
+                    source_parts.append(str(path))
+            else:
+                LOGGER.warning("allowlist path not found: %s", path)
+        if csv_raw:
+            for item in csv_raw.split(","):
+                token = self._normalize_class_name(item)
+                if token:
+                    normalized.add(token)
+            source_parts.append("EDGE_DETECT_CLASS_ALLOWLIST")
+        if not normalized:
+            return None, None
+        return normalized, ",".join(source_parts) if source_parts else None
+
+    @staticmethod
+    def _normalize_class_name(value: Any) -> str:
+        return str(value or "").strip().lower()
 
     def get_recent_clip(
         self,
@@ -539,11 +713,13 @@ class EdgeDeviceRuntime:
         return self._event_seq_no
 
     def _pending_event_count(self) -> int:
-        return len(list(self.config.pending_event_dir.glob("*.json")))
+        with self._pending_lock:
+            return len(list(self.config.pending_event_dir.glob("*.json")))
 
     def _pending_event_files(self) -> list[Path]:
-        files = [path for path in self.config.pending_event_dir.glob("*.json") if path.is_file()]
-        return sorted(files, key=lambda item: item.name)
+        with self._pending_lock:
+            files = [path for path in self.config.pending_event_dir.glob("*.json") if path.is_file()]
+            return sorted(files, key=lambda item: item.name)
 
     @staticmethod
     def _pending_priority(payload: dict[str, Any]) -> int:
@@ -559,26 +735,28 @@ class EdgeDeviceRuntime:
         return 5
 
     def _enqueue_pending_event(self, payload: dict[str, Any]) -> None:
-        priority = self._pending_priority(payload)
-        now = compact_now_for_filename()
-        file_name = f"{priority:02d}_{now}_{uuid4().hex[:8]}.json"
-        output = self.config.pending_event_dir / file_name
-        output.write_text(
-            json.dumps(
-                {
-                    "queued_at": utc_now_iso8601(),
-                    "priority": priority,
-                    "payload": payload,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
-        self._enforce_pending_limit()
+        with self._pending_lock:
+            priority = self._pending_priority(payload)
+            now = compact_now_for_filename()
+            file_name = f"{priority:02d}_{now}_{uuid4().hex[:8]}.json"
+            output = self.config.pending_event_dir / file_name
+            output.write_text(
+                json.dumps(
+                    {
+                        "queued_at": utc_now_iso8601(),
+                        "priority": priority,
+                        "payload": payload,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            self._enforce_pending_limit()
 
     def _enforce_pending_limit(self) -> None:
-        files = self._pending_event_files()
+        files = [path for path in self.config.pending_event_dir.glob("*.json") if path.is_file()]
+        files = sorted(files, key=lambda item: item.name)
         overflow = len(files) - max(int(self.config.pending_event_max), 1)
         if overflow <= 0:
             return
@@ -665,6 +843,34 @@ class EdgeDeviceRuntime:
             return False
         return True
 
+    def _post_event_with_mode(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if self._backend_post_mode != "async":
+            backend_response = self.backend_client.post_event(payload)
+            if self._is_backend_ack(backend_response):
+                return backend_response, False
+            self._enqueue_pending_event(payload)
+            return backend_response, True
+
+        if self._async_queue is None:
+            backend_response = {"ok": False, "error": "async_queue_unavailable"}
+            self._enqueue_pending_event(payload)
+            return backend_response, True
+        try:
+            self._async_queue.put_nowait(payload)
+            return {
+                "ok": True,
+                "message": "queued_async",
+                "queue_depth": self._async_queue.qsize(),
+            }, True
+        except queue.Full:
+            backend_response = {"ok": False, "error": "async_queue_full"}
+            self._enqueue_pending_event(payload)
+            return backend_response, True
+
+    def _run_once_snapshot_enabled(self) -> bool:
+        mode = (self.config.run_once_snapshot_mode or "sync").strip().lower()
+        return mode not in {"off", "disable", "none", "0", "false"}
+
     def pending_event_snapshot(self) -> list[dict[str, Any]]:
         snapshot: list[dict[str, Any]] = []
         for event_file in self._pending_event_files():
@@ -704,6 +910,9 @@ def load_config_from_env() -> EdgeDeviceConfig:
         capture_retry_delay_sec=float(os.getenv("EDGE_CAPTURE_RETRY_DELAY_SEC", "1.0")),
         capture_parallel=_parse_bool_env(os.getenv("EDGE_CAPTURE_PARALLEL"), fallback=True),
         capture_parallel_wait_sec=float(os.getenv("EDGE_CAPTURE_PARALLEL_WAIT_SEC", "0.4")),
+        backend_post_mode=os.getenv("EDGE_BACKEND_POST_MODE", "sync"),
+        backend_post_queue_max=int(os.getenv("EDGE_BACKEND_POST_QUEUE_MAX", "64")),
+        run_once_snapshot_mode=os.getenv("EDGE_RUN_ONCE_SNAPSHOT_MODE", "sync"),
         snapshot_dir=Path(os.getenv("EDGE_SNAPSHOT_DIR", "./data/edge_device/snapshots")),
         clip_dir=Path(os.getenv("EDGE_CLIP_DIR", "./data/edge_device/clips")),
         snapshot_buffer_size=int(os.getenv("EDGE_SNAPSHOT_BUFFER_SIZE", "32")),
@@ -751,18 +960,21 @@ def main() -> None:
     args = parser.parse_args()
 
     runtime = EdgeDeviceRuntime(config=load_config_from_env())
-    if args.action == "run-once":
-        result = runtime.run_once(trace_id=args.trace_id)
-    elif args.action == "heartbeat":
-        result = runtime.send_heartbeat(trace_id=args.trace_id)
-    elif args.action == "take-snapshot":
-        result = runtime.take_snapshot(trace_id=args.trace_id, command_id=args.command_id)
-    else:
-        result = runtime.get_recent_clip(
-            duration_sec=args.duration_sec,
-            trace_id=args.trace_id,
-            command_id=args.command_id,
-        )
+    try:
+        if args.action == "run-once":
+            result = runtime.run_once(trace_id=args.trace_id)
+        elif args.action == "heartbeat":
+            result = runtime.send_heartbeat(trace_id=args.trace_id)
+        elif args.action == "take-snapshot":
+            result = runtime.take_snapshot(trace_id=args.trace_id, command_id=args.command_id)
+        else:
+            result = runtime.get_recent_clip(
+                duration_sec=args.duration_sec,
+                trace_id=args.trace_id,
+                command_id=args.command_id,
+            )
+    finally:
+        runtime.close()
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

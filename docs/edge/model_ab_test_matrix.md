@@ -32,7 +32,7 @@ export EDGE_CAPTURE_RETRY_DELAY_SEC=1.0
 
 export EDGE_DETECTOR_BACKEND=rknn
 export EDGE_DETECT_MIN_CONFIDENCE=0.35
-export EDGE_RKNN_LABELS=person,package,car
+export EDGE_RKNN_LABELS='person,bicycle,car,motorcycle,airplane,bus,train,truck,boat,traffic light,fire hydrant,stop sign,parking meter,bench,bird,cat,dog,horse,sheep,cow,elephant,bear,zebra,giraffe,backpack,umbrella,handbag,tie,suitcase,frisbee,skis,snowboard,sports ball,kite,baseball bat,baseball glove,skateboard,surfboard,tennis racket,bottle,wine glass,cup,fork,knife,spoon,bowl,banana,apple,sandwich,orange,broccoli,carrot,hot dog,pizza,donut,cake,chair,couch,potted plant,bed,dining table,toilet,tv,laptop,mouse,remote,keyboard,cell phone,microwave,oven,toaster,sink,refrigerator,book,clock,vase,scissors,teddy bear,hair drier,toothbrush'
 
 export EDGE_SNAPSHOT_DIR=./data/edge_device/snapshots
 export EDGE_CLIP_DIR=./data/edge_device/clips
@@ -97,3 +97,37 @@ done
 | B1 |  |  |  |  |  |  |  |  |
 | C1 |  |  |  |  |  |  |  |  |
 | C2 |  |  |  |  |  |  |  |  |
+
+## 最新实机对比（2026-03-15，RK3566）
+
+### 统一测试口径
+- 设备：RK3566（NPU governor=`performance`，`cur_freq=900MHz`）
+- 采集：`/dev/video0`，`1280x720`，`MJPG`，`30fps`
+- 模型输入：`640x640`
+- 运行参数：`EDGE_BACKEND_POST_MODE=async`、`EDGE_RUN_ONCE_SNAPSHOT_MODE=off`、`EDGE_CAPTURE_PARALLEL=1`
+- 日志留档：`logs/rk3566_bench_20260315/*.log`
+
+### 纯推理（不含采集/预处理/后处理）
+
+| 模型 | avg_infer_ms | fps |
+| --- | --- | --- |
+| `main_detector_n_int8.rknn` | 127.21 | 7.86 |
+| `yolov8n_official_i8_rk3566.rknn` | 53.26 | 18.78 |
+| `yolov8n_rockchip_opt_i8_rk3566.rknn` | 52.94 | 18.89 |
+
+### 端到端（优化前 vs 优化后）
+
+说明：
+- 优化前：分段改造已接入，但仍存在 `cv2` 缺失与采集双阶段开销。
+- 优化后：`rknn` 环境补齐 `opencv-python-headless`，采集改为单次 snapshot 路径（去掉重复预抓拍）。
+
+| 模型 | 优化前 avg_total_ms | 优化前 fps | 优化后 avg_total_ms | 优化后 fps | 提升 |
+| --- | --- | --- | --- | --- | --- |
+| `main_detector_n_int8.rknn` | 422.90 | 2.36 | 209.90 | 4.76 | +101.8% |
+| `yolov8n_official_i8_rk3566.rknn` | 408.10 | 2.45 | 216.97 | 4.61 | +88.2% |
+| `yolov8n_rockchip_opt_i8_rk3566.rknn` | 403.75 | 2.48 | 211.59 | 4.73 | +90.7% |
+
+### 当前结论
+- 在本项目 Python 端到端链路下，已从约 `2.4 FPS` 提升到约 `4.6~4.8 FPS`。
+- `rockchip_opt` 与 `official` 在当前链路中的端到端差距很小（约 `0.12 FPS`）。
+- 主瓶颈已从“纯推理”转为“预处理 + 后处理 + Python 链路”，不是 NPU 频率。

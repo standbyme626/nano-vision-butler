@@ -16,7 +16,7 @@
 - `EDGE_RKNN_MODEL_PATH`：RKNN 模型路径（默认 `./models/rknn/yolov8n_rockchip_opt_i8_rk3566.rknn`）。
 - `EDGE_RKNN_MODEL_VERSION`：模型版本号（默认取模型文件名 stem）。
 - `EDGE_RKNN_INPUT_SIZE`：推理输入大小（例如 `640x640`）。
-- `EDGE_RKNN_LABELS`：类别列表（逗号分隔，默认 `person,package,car`）。
+- `EDGE_RKNN_LABELS`：类别列表（逗号分隔，默认 COCO80 顺序）。
 
 ## 导出流程
 1. 准备 ONNX 模型。

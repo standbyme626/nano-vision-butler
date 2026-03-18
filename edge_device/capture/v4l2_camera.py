@@ -78,11 +78,16 @@ class V4L2Camera:
         for backend in backends:
             try:
                 if backend == "v4l2":
-                    self._capture_via_v4l2ctl()
+                    image_path = self._capture_snapshot_via_v4l2ctl()
+                    if image_path is None and self._command_exists("ffmpeg"):
+                        image_path = self._capture_snapshot_via_ffmpeg()
                 elif backend == "gstreamer":
                     self._capture_via_gstreamer()
+                    image_path = self._capture_snapshot_jpeg()
                 elif backend == "ffmpeg":
-                    self._capture_via_ffmpeg()
+                    image_path = self._capture_snapshot_via_ffmpeg()
+                    if image_path is None:
+                        raise CaptureError("ffmpeg snapshot capture failed")
                 else:
                     raise CaptureError(f"unsupported backend: {backend}")
                 _LOG.info(
@@ -94,8 +99,7 @@ class V4L2Camera:
                     self._config.fps,
                     self._config.pixel_format,
                 )
-                image_path = self._capture_snapshot_jpeg()
-                if image_path is not None:
+                if image_path:
                     _LOG.info("captured source frame to jpeg: %s", image_path)
                 return backend, image_path
             except CaptureError as exc:
@@ -275,6 +279,7 @@ class V4L2Camera:
                 return str(output_path)
         except CaptureError as exc:
             _LOG.warning("v4l2 snapshot capture failed: %s", exc)
+            raise
 
         try:
             output_path.unlink(missing_ok=True)

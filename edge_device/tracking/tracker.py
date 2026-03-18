@@ -45,6 +45,11 @@ class LightweightTracker:
             fallback=8,
             minimum=1,
         )
+        self.zone_switch_margin = _clamp_float(
+            _resolve_float(value=None, env_key="EDGE_TRACK_ZONE_SWITCH_MARGIN", fallback=0.03),
+            lower=0.0,
+            upper=0.2,
+        )
         self._zone_bands = _parse_zone_layout(
             zone_layout if zone_layout is not None else os.getenv("EDGE_TRACK_ZONE_LAYOUT"),
             fallback="entry_door:0.0-0.6,hallway:0.6-1.0",
@@ -67,14 +72,20 @@ class LightweightTracker:
         used_track_ids: set[str] = set()
         tracked: list[Detection] = []
         for det in detections:
-            zone_id = self._resolve_zone_id(det=det, frame_width=frame_width)
+            matched_state: _TrackState | None = None
             if det.track_id:
                 track_id = det.track_id
+                matched_state = self._tracks.get(track_id)
             else:
-                track_id = self._match_existing_track(det=det, zone_id=zone_id, used_track_ids=used_track_ids)
+                track_id, matched_state = self._match_existing_track(det=det, used_track_ids=used_track_ids)
                 if track_id is None:
                     track_id = f"trk-{next(self._counter):05d}"
 
+            zone_id = self._resolve_zone_id(
+                det=det,
+                frame_width=frame_width,
+                previous_zone_id=matched_state.zone_id if matched_state is not None else None,
+            )
             used_track_ids.add(track_id)
             self._tracks[track_id] = _TrackState(
                 object_class=det.object_class,
@@ -89,17 +100,15 @@ class LightweightTracker:
         self,
         *,
         det: Detection,
-        zone_id: str,
         used_track_ids: set[str],
-    ) -> str | None:
+    ) -> tuple[str | None, _TrackState | None]:
         matched_track_id: str | None = None
+        matched_state: _TrackState | None = None
         matched_iou = 0.0
         for track_id, state in self._tracks.items():
             if track_id in used_track_ids:
                 continue
             if state.object_class != det.object_class:
-                continue
-            if state.zone_id != zone_id:
                 continue
             overlap = _bbox_iou(state.bbox, det.bbox)
             if overlap < self.iou_threshold:
@@ -107,7 +116,8 @@ class LightweightTracker:
             if overlap > matched_iou:
                 matched_iou = overlap
                 matched_track_id = track_id
-        return matched_track_id
+                matched_state = state
+        return matched_track_id, matched_state
 
     def _expire_stale_tracks(self, *, current_frame: int) -> None:
         expired = [
@@ -118,19 +128,34 @@ class LightweightTracker:
         for track_id in expired:
             self._tracks.pop(track_id, None)
 
-    def _resolve_zone_id(self, *, det: Detection, frame_width: int | None) -> str:
-        mapped_zone = self._map_zone_by_bbox(det=det, frame_width=frame_width)
+    def _resolve_zone_id(
+        self,
+        *,
+        det: Detection,
+        frame_width: int | None,
+        previous_zone_id: str | None,
+    ) -> str:
+        mapped_zone, center_ratio = self._map_zone_by_bbox(det=det, frame_width=frame_width)
         if mapped_zone is not None:
+            if (
+                previous_zone_id
+                and previous_zone_id != mapped_zone
+                and center_ratio is not None
+                and self._is_near_zone_boundary(previous_zone_id=previous_zone_id, center_ratio=center_ratio)
+            ):
+                return previous_zone_id
             return mapped_zone
+        if previous_zone_id:
+            return previous_zone_id
         if det.zone_id and det.zone_id.strip():
             return det.zone_id.strip()
         return "global"
 
-    def _map_zone_by_bbox(self, *, det: Detection, frame_width: int | None) -> str | None:
+    def _map_zone_by_bbox(self, *, det: Detection, frame_width: int | None) -> tuple[str | None, float | None]:
         if frame_width is None or frame_width <= 0:
-            return None
+            return None, None
         if not self._zone_bands:
-            return None
+            return None, None
         x1, _, x2, _ = det.bbox
         center_ratio = ((x1 + x2) / 2.0) / float(frame_width)
         center_ratio = _clamp_float(center_ratio, lower=0.0, upper=1.0)
@@ -140,8 +165,22 @@ class LightweightTracker:
             if center_ratio < band.start_ratio:
                 continue
             if center_ratio < band.end_ratio or (right_inclusive and center_ratio <= band.end_ratio):
-                return band.zone_id
-        return None
+                return band.zone_id, center_ratio
+        return None, center_ratio
+
+    def _is_near_zone_boundary(self, *, previous_zone_id: str, center_ratio: float) -> bool:
+        if not self._zone_bands:
+            return False
+        if self.zone_switch_margin <= 0:
+            return False
+        last_idx = len(self._zone_bands) - 1
+        for idx, band in enumerate(self._zone_bands):
+            if band.zone_id != previous_zone_id:
+                continue
+            near_left = idx > 0 and abs(center_ratio - band.start_ratio) <= self.zone_switch_margin
+            near_right = idx < last_idx and abs(center_ratio - band.end_ratio) <= self.zone_switch_margin
+            return near_left or near_right
+        return False
 
 
 def _bbox_iou(left: tuple[int, int, int, int], right: tuple[int, int, int, int]) -> float:

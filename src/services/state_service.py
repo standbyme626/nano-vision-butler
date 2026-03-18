@@ -44,7 +44,8 @@ class StateService:
         require_non_empty(object_name, "object_name")
         existing = self._state_repo.get_object_state(object_name=object_name, camera_id=camera_id, zone_id=zone_id)
         if existing is not None:
-            return self._serialize_object_state(existing, reason_code="state_row_found")
+            reason_code = "state_row_found_stale" if bool(existing.is_stale) else "state_row_found"
+            return self._serialize_object_state(existing, reason_code=reason_code)
 
         refreshed, reason_code = self.refresh_object_state(
             object_name=object_name,
@@ -58,7 +59,8 @@ class StateService:
         require_non_empty(zone_id, "zone_id")
         existing = self._state_repo.get_zone_state(camera_id=camera_id, zone_id=zone_id)
         if existing is not None:
-            return self._serialize_zone_state(existing, reason_code="state_row_found")
+            reason_code = "state_row_found_stale" if bool(existing.is_stale) else "state_row_found"
+            return self._serialize_zone_state(existing, reason_code=reason_code)
 
         refreshed, reason_code = self.refresh_zone_state(camera_id=camera_id, zone_id=zone_id)
         return self._serialize_zone_state(refreshed, reason_code=reason_code)
@@ -76,11 +78,18 @@ class StateService:
         items = [dict(row) for row in rows]
         status_counts: dict[str, int] = {}
         zone_counts: dict[str, int] = {}
+        freshness_counts: dict[str, int] = {}
         for item in items:
             status = str(item.get("device_status") or "unknown")
             zone_value = str(item.get("zone_state_value") or "unknown")
+            freshness_level = self._classify_freshness_level(
+                fresh_until=item.get("zone_fresh_until"),
+                is_stale=bool(item.get("zone_is_stale", 0)),
+            )
+            item["zone_freshness_level"] = freshness_level
             status_counts[status] = status_counts.get(status, 0) + 1
             zone_counts[zone_value] = zone_counts.get(zone_value, 0) + 1
+            freshness_counts[freshness_level] = freshness_counts.get(freshness_level, 0) + 1
 
         return {
             "items": items,
@@ -88,6 +97,7 @@ class StateService:
                 "total_rows": len(items),
                 "device_status_counts": status_counts,
                 "zone_state_counts": zone_counts,
+                "zone_freshness_counts": freshness_counts,
                 "generated_at": utc_now_iso8601(),
             },
             "reason_code": "world_state_view_snapshot",
@@ -257,6 +267,23 @@ class StateService:
         fresh_until_dt = datetime.fromisoformat(fresh_until.replace("Z", "+00:00")).astimezone(timezone.utc)
         return now > fresh_until_dt
 
+    def _classify_freshness_level(self, *, fresh_until: str | None, is_stale: bool) -> str:
+        if not fresh_until:
+            return "unknown"
+        if is_stale:
+            return "stale"
+        try:
+            fresh_until_dt = datetime.fromisoformat(fresh_until.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            return "unknown"
+        now = datetime.now(tz=timezone.utc)
+        remaining_sec = (fresh_until_dt - now).total_seconds()
+        stale_cfg = self._config.policies.get("stale", {})
+        grace_sec = max(int(stale_cfg.get("stale_grace_sec", 120)), 1)
+        if remaining_sec <= grace_sec:
+            return "aging"
+        return "fresh"
+
     def _serialize_object_state(self, state: ObjectState, *, reason_code: str) -> dict[str, Any]:
         payload = {
             "id": state.id,
@@ -270,6 +297,10 @@ class StateService:
             "last_changed_at": state.last_changed_at,
             "fresh_until": state.fresh_until,
             "is_stale": bool(state.is_stale),
+            "freshness_level": self._classify_freshness_level(
+                fresh_until=state.fresh_until,
+                is_stale=bool(state.is_stale),
+            ),
             "evidence_count": state.evidence_count,
             "source_layer": state.source_layer,
             "summary": state.summary,
@@ -288,6 +319,10 @@ class StateService:
             "observed_at": state.observed_at,
             "fresh_until": state.fresh_until,
             "is_stale": bool(state.is_stale),
+            "freshness_level": self._classify_freshness_level(
+                fresh_until=state.fresh_until,
+                is_stale=bool(state.is_stale),
+            ),
             "evidence_count": state.evidence_count,
             "source_layer": state.source_layer,
             "summary": state.summary,
@@ -295,4 +330,3 @@ class StateService:
             "reason_code": reason_code,
         }
         return payload
-

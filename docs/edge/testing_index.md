@@ -9,8 +9,10 @@
 - `docs/edge/model_ab_test_matrix.md`：A/B 测试分组、指标、执行命令、记录模板。
 - `docs/edge/test_necessity_analysis.md`：为什么必须分层测试，以及不测的风险。
 - `docs/edge/light_edge_heavy_backend_refactor.md`：轻前端重后端改造方案与第一阶段落地项。
+- `docs/edge/修复1整理版.md`：从 `修复1.md` 提炼的第二阶段收敛任务单（保留原文不改动）。
 
 ## 使用顺序
 1. 先读 `model_selection_strategy.md`，确定首发模型和备选。
 2. 再按 `model_ab_test_matrix.md` 跑测试并填表。
 3. 最后用 `test_necessity_analysis.md` 对照验收，判断测试是否覆盖计划书目标。
+4. 进入执行阶段前读 `修复1整理版.md`，按“行动包 + 验证清单 + 提示词模板”推进。

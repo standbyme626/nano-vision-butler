@@ -115,6 +115,7 @@ class StateServiceUnitTests(unittest.TestCase):
         self.assertEqual(result["reason_code"], "refreshed_from_observation")
         self.assertEqual(result["evidence_count"], 1)
         self.assertFalse(result["is_stale"])
+        self.assertEqual(result["freshness_level"], "fresh")
 
     def test_get_zone_state_marks_zone_occupied_when_multiple_present(self) -> None:
         self._save_observation(object_name="package", fresh_until=self._future_iso(5))
@@ -125,6 +126,7 @@ class StateServiceUnitTests(unittest.TestCase):
         self.assertEqual(result["state_value"], "occupied")
         self.assertEqual(result["reason_code"], "refreshed_from_zone_observations")
         self.assertGreaterEqual(int(result["evidence_count"]), 2)
+        self.assertEqual(result["freshness_level"], "fresh")
 
 
 if __name__ == "__main__":

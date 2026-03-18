@@ -14,35 +14,47 @@ roles:
 
 telegram_allowlist:
   user_ids:
-    - "__SET_TELEGRAM_USER_ID__"
+    - "7566115125"
 
 device_allowlist:
   device_ids:
     - rk3566-dev-01
 
 user_roles:
-  "__SET_TELEGRAM_USER_ID__": owner
+  "7566115125": owner
 
 mcp_tool_allowlist:
   - get_world_state
   - query_recent_events
+  - describe_scene
+  - last_seen_object
   - get_object_state
   - get_zone_state
+  - evaluate_staleness
   - take_snapshot
   - get_recent_clip
   - ocr_quick_read
   - device_status
+  - refresh_object_state
+  - refresh_zone_state
+  - audit_recent_access
 
 tool_allowlist_per_skill:
   telegram:
     - take_snapshot
     - get_recent_clip
+    - describe_scene
     - last_seen_object
     - get_object_state
+    - get_zone_state
+    - evaluate_staleness
     - get_world_state
     - query_recent_events
     - ocr_quick_read
     - device_status
+    - refresh_object_state
+    - refresh_zone_state
+    - audit_recent_access
   mcp_console:
     - "*"
 
@@ -50,6 +62,7 @@ resource_scope_per_skill:
   telegram:
     - resource://memory/events
     - resource://devices/status
+    - resource://security/access_scope
   mcp_console:
     - "*"
 

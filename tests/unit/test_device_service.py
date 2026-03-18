@@ -107,7 +107,21 @@ class DeviceServiceUnitTests(unittest.TestCase):
         self.assertEqual(latest_audit.action, "device_take_snapshot")
         self.assertEqual(latest_audit.decision, "deny")
 
+    def test_take_snapshot_accepts_camera_id_in_device_id_field(self) -> None:
+        result = self.service.take_snapshot({"device_id": "cam-entry-01", "trace_id": "trace-unit-camera-alias"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"]["device_id"], "rk3566-dev-01")
+        self.assertEqual(result["data"]["camera_id"], "cam-entry-01")
+
+    def test_take_snapshot_unknown_device_does_not_trigger_audit_fk_error(self) -> None:
+        with self.assertRaises(DeviceExecutionError) as ctx:
+            self.service.take_snapshot({"device_id": "non-existent-device", "trace_id": "trace-unit-missing-device"})
+        self.assertEqual(ctx.exception.code, "DEVICE_NOT_FOUND")
+        latest_audit = self.audit_repo.list_recent(limit=1)[0]
+        self.assertEqual(latest_audit.action, "device_take_snapshot")
+        self.assertEqual(latest_audit.decision, "deny")
+        self.assertIsNone(latest_audit.device_id)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

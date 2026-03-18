@@ -39,16 +39,50 @@ class EventCompressor:
         )
         self.analysis_enable = _resolve_bool(env_key="EDGE_ANALYSIS_ENABLE", fallback=True)
         self.analysis_ocr_enable = _resolve_bool(env_key="EDGE_ANALYSIS_OCR_ENABLE", fallback=True)
+        self.analysis_q8_enable = _resolve_bool(env_key="EDGE_ANALYSIS_Q8_ENABLE", fallback=True)
         self.analysis_min_importance_ocr = _resolve_int(
             env_key="EDGE_ANALYSIS_MIN_IMPORTANCE_OCR",
             fallback=4,
             minimum=1,
             maximum=5,
         )
+        self.analysis_min_importance_q8 = _resolve_int(
+            env_key="EDGE_ANALYSIS_MIN_IMPORTANCE_Q8",
+            fallback=3,
+            minimum=1,
+            maximum=5,
+        )
+        self.analysis_q8_interval_sec = max(
+            _resolve_float(value=None, env_key="EDGE_ANALYSIS_Q8_INTERVAL_SEC", fallback=30.0),
+            0.0,
+        )
         self.analysis_profile = (os.getenv("EDGE_ANALYSIS_PROFILE", "backend_heavy_v1") or "").strip() or "backend_heavy_v1"
+        self.analysis_ocr_classes = _resolve_csv_set(
+            env_key="EDGE_ANALYSIS_OCR_CLASSES",
+            fallback={"package", "document", "label", "screen"},
+        )
+        self.analysis_q8_classes = _resolve_csv_set(
+            env_key="EDGE_ANALYSIS_Q8_CLASSES",
+            fallback={"person"},
+        )
+        self.signature_cache_max = _resolve_int(
+            env_key="EDGE_EVENT_SIGNATURE_CACHE_MAX",
+            fallback=4096,
+            minimum=64,
+            maximum=65536,
+        )
+        self.signature_retention_sec = max(
+            _resolve_float(
+                value=None,
+                env_key="EDGE_EVENT_SIGNATURE_RETENTION_SEC",
+                fallback=max(self.dedupe_window_sec * 3.0, 5.0),
+            ),
+            self.dedupe_window_sec,
+        )
         self._time_provider = time_provider or time.monotonic
         self._last_meaningful_emit_at_by_camera: dict[str, float] = {}
         self._last_signature_at: dict[str, float] = {}
+        self._last_q8_analysis_at_by_camera: dict[str, float] = {}
 
     def build_envelope(
         self,
@@ -80,6 +114,8 @@ class EventCompressor:
             primary=primary,
             importance=importance,
             snapshot_uri=snapshot_uri,
+            camera_id=camera_id,
+            now_monotonic=now_monotonic,
         )
         emitted_at = utc_now_iso8601()
         event_id = f"evt-{uuid4().hex[:12]}"
@@ -163,13 +199,34 @@ class EventCompressor:
 
         signature = self._fingerprint(camera_id=camera_id, detections=detections)
         if self.dedupe_window_sec > 0:
+            self._cleanup_signature_cache(now_monotonic=now_monotonic)
             last_signature_at = self._last_signature_at.get(signature)
             if last_signature_at is not None and now_monotonic - last_signature_at < self.dedupe_window_sec:
                 return "deduplicated"
 
         self._last_meaningful_emit_at_by_camera[camera_id] = now_monotonic
         self._last_signature_at[signature] = now_monotonic
+        self._enforce_signature_cache_limit()
         return None
+
+    def _cleanup_signature_cache(self, *, now_monotonic: float) -> None:
+        if not self._last_signature_at:
+            return
+        stale_signatures = [
+            signature
+            for signature, emitted_at in self._last_signature_at.items()
+            if now_monotonic - emitted_at > self.signature_retention_sec
+        ]
+        for signature in stale_signatures:
+            self._last_signature_at.pop(signature, None)
+
+    def _enforce_signature_cache_limit(self) -> None:
+        overflow = len(self._last_signature_at) - self.signature_cache_max
+        if overflow <= 0:
+            return
+        oldest = sorted(self._last_signature_at.items(), key=lambda item: item[1])[:overflow]
+        for signature, _ in oldest:
+            self._last_signature_at.pop(signature, None)
 
     @staticmethod
     def _fingerprint(*, camera_id: str, detections: list[Detection]) -> str:
@@ -227,16 +284,46 @@ class EventCompressor:
         primary: Detection | None,
         importance: int,
         snapshot_uri: str | None,
+        camera_id: str,
+        now_monotonic: float,
     ) -> list[dict[str, object]]:
-        if not self.analysis_enable or not self.analysis_ocr_enable:
+        if not self.analysis_enable:
             return []
         if primary is None or not snapshot_uri:
+            return []
+        requests: list[dict[str, object]] = []
+        requests.extend(
+            self._build_ocr_analysis_requests(
+                primary=primary,
+                importance=importance,
+                snapshot_uri=snapshot_uri,
+            )
+        )
+        q8_request = self._build_q8_analysis_request(
+            primary=primary,
+            importance=importance,
+            snapshot_uri=snapshot_uri,
+            camera_id=camera_id,
+            now_monotonic=now_monotonic,
+        )
+        if q8_request is not None:
+            requests.append(q8_request)
+        return requests
+
+    def _build_ocr_analysis_requests(
+        self,
+        *,
+        primary: Detection,
+        importance: int,
+        snapshot_uri: str,
+    ) -> list[dict[str, object]]:
+        if not self.analysis_ocr_enable:
             return []
         if importance < self.analysis_min_importance_ocr:
             return []
         if primary.confidence < max(self.min_confidence, 0.70):
             return []
-        if primary.object_class not in {"package", "document", "label", "screen"}:
+        if primary.object_class.lower() not in self.analysis_ocr_classes:
             return []
 
         priority = "high" if importance >= 4 else "normal"
@@ -250,6 +337,41 @@ class EventCompressor:
                 "track_id": primary.track_id,
             }
         ]
+
+    def _build_q8_analysis_request(
+        self,
+        *,
+        primary: Detection,
+        importance: int,
+        snapshot_uri: str,
+        camera_id: str,
+        now_monotonic: float,
+    ) -> dict[str, object] | None:
+        if not self.analysis_q8_enable:
+            return None
+        if importance < self.analysis_min_importance_q8:
+            return None
+        if primary.confidence < max(self.min_confidence, 0.50):
+            return None
+        if primary.object_class.lower() not in self.analysis_q8_classes:
+            return None
+        last_emit = self._last_q8_analysis_at_by_camera.get(camera_id)
+        if last_emit is not None and now_monotonic - last_emit < self.analysis_q8_interval_sec:
+            return None
+
+        self._last_q8_analysis_at_by_camera[camera_id] = now_monotonic
+        priority = "high" if importance >= 4 else "normal"
+        return {
+            "type": "vision_q8_describe",
+            "priority": priority,
+            "reason": f"{primary.object_class}_periodic_q8",
+            "input_uri": snapshot_uri,
+            "object_class": primary.object_class,
+            "object_name": primary.object_name,
+            "track_id": primary.track_id,
+            "camera_id": camera_id,
+            "zone_id": primary.zone_id,
+        }
 
 
 def _resolve_float(*, value: float | None, env_key: str, fallback: float) -> float:
@@ -297,3 +419,10 @@ def _resolve_int(*, env_key: str, fallback: int, minimum: int, maximum: int) -> 
     if parsed > maximum:
         return maximum
     return parsed
+
+
+def _resolve_csv_set(*, env_key: str, fallback: set[str]) -> set[str]:
+    raw = os.getenv(env_key)
+    if raw is None:
+        return set(fallback)
+    return {token.strip().lower() for token in raw.split(",") if token.strip()}

@@ -109,6 +109,9 @@ class MCPToolsIntegrationTests(unittest.TestCase):
         self.assertIn("take_snapshot", tool_names)
         self.assertIn("evaluate_staleness", tool_names)
         self.assertIn("ocr_extract_fields", tool_names)
+        self.assertIn("refresh_object_state", tool_names)
+        self.assertIn("refresh_zone_state", tool_names)
+        self.assertIn("audit_recent_access", tool_names)
 
         snapshot = self.server.call_tool("take_snapshot", {"device_id": "rk3566-dev-01", "trace_id": "t9-1"})
         self.assertTrue(snapshot["ok"])
@@ -139,15 +142,56 @@ class MCPToolsIntegrationTests(unittest.TestCase):
         self.assertTrue(stale["ok"])
         self.assertIn("is_stale", stale["data"])
         self.assertIn("fallback_required", stale["data"])
+        self.assertIn("freshness_level", stale["data"])
+
+        refreshed_object = self.server.call_tool(
+            "refresh_object_state",
+            {
+                "object_name": "package",
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+                "trace_id": "t9-refresh-object-1",
+            },
+        )
+        self.assertTrue(refreshed_object["ok"])
+        self.assertIn("reason_code", refreshed_object["data"])
+
+        refreshed_zone = self.server.call_tool(
+            "refresh_zone_state",
+            {
+                "camera_id": "cam-entry-01",
+                "zone_id": "entry_door",
+                "trace_id": "t9-refresh-zone-1",
+            },
+        )
+        self.assertTrue(refreshed_zone["ok"])
+        self.assertIn("reason_code", refreshed_zone["data"])
+
+        recent_audit = self.server.call_tool(
+            "audit_recent_access",
+            {"limit": 10, "trace_id": "t9-audit-1"},
+        )
+        self.assertTrue(recent_audit["ok"])
+        self.assertIn("items", recent_audit["data"])
+        self.assertIsInstance(recent_audit["data"]["items"], list)
 
     def test_resources_and_prompts_available(self) -> None:
         resource_uris = {item["uri"] for item in self.server.list_resources()}
         self.assertIn("resource://memory/events", resource_uris)
         self.assertIn("resource://policy/freshness", resource_uris)
+        self.assertIn("resource://security/access_scope", resource_uris)
 
         events = self.server.read_resource("resource://memory/events", {"zone_id": "entry_door", "limit": 5})
         self.assertTrue(events["ok"])
         self.assertGreaterEqual(len(events["data"]["items"]), 1)
+
+        access_scope = self.server.read_resource(
+            "resource://security/access_scope",
+            {"skill_name": "mcp_console", "user_id": "7566115125", "trace_id": "t9-scope-1"},
+        )
+        self.assertTrue(access_scope["ok"])
+        self.assertIn("tool_allowlist_per_skill", access_scope["data"])
+        self.assertIn("resource_scope_per_skill", access_scope["data"])
 
         prompt_names = {item["name"] for item in self.server.list_prompts()}
         self.assertIn("scene_query", prompt_names)

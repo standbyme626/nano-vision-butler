@@ -7,6 +7,7 @@ from typing import Any
 
 from src.mcp_server.contracts import ResourceSpec, build_error, build_success
 from src.mcp_server.runtime import MCPRuntime
+from src.security.access_policy import AccessPolicy
 
 
 class MCPResourceRegistry:
@@ -49,6 +50,11 @@ class MCPResourceRegistry:
                 description="Current device status rows.",
                 params_schema={"status": "str?", "camera_id": "str?", "limit": "int?"},
             ),
+            "resource://security/access_scope": ResourceSpec(
+                uri="resource://security/access_scope",
+                description="Current access policy scope and allowlists.",
+                params_schema={"user_id": "str?", "skill_name": "str?"},
+            ),
         }
 
     def list_resources(self) -> list[dict[str, Any]]:
@@ -78,6 +84,8 @@ class MCPResourceRegistry:
                 return self._freshness_policy(payload)
             if uri == "resource://devices/status":
                 return self._devices_status(payload)
+            if uri == "resource://security/access_scope":
+                return self._security_access_scope(payload)
             return build_error(
                 summary=f"Resource handler missing: {uri}",
                 source_layer="mcp.resources",
@@ -179,6 +187,56 @@ class MCPResourceRegistry:
             summary=f"Loaded {len(items)} devices",
             data={"items": items},
             source_layer="mcp.resources.device",
+            trace_id=trace_id,
+        )
+
+    def _security_access_scope(self, payload: dict[str, Any]) -> dict[str, Any]:
+        trace_id = self._as_text(payload.get("trace_id"))
+        user_id = self._as_text(payload.get("user_id"))
+        skill_name = self._as_text(payload.get("skill_name"))
+        policy = AccessPolicy.from_config(self._runtime.config.access)
+
+        data: dict[str, Any] = {
+            "default_role": policy.default_role,
+            "user_allowlist": sorted(policy.user_allowlist),
+            "device_allowlist": sorted(policy.device_allowlist),
+            "user_roles": dict(sorted(policy.user_roles.items())),
+            "role_permissions": policy.role_permissions,
+            "tool_allowlist_per_skill": {
+                key: sorted(value)
+                for key, value in sorted(policy.tool_allowlist_per_skill.items())
+            },
+            "resource_scope_per_skill": {
+                key: sorted(value)
+                for key, value in sorted(policy.resource_scope_per_skill.items())
+            },
+            "media_visibility_scope": {
+                key: sorted(value)
+                for key, value in sorted(policy.media_visibility_scope.items())
+            },
+        }
+
+        if user_id:
+            role = policy.resolve_role(user_id)
+            data["effective_user_scope"] = {
+                "user_id": user_id,
+                "role": role,
+                "is_user_allowed": policy.is_user_allowed(user_id),
+                "can_view_all": policy.role_can_view_all(role),
+                "allowed_media_scopes": sorted(policy.allowed_media_scopes(role)),
+            }
+
+        if skill_name:
+            data["effective_skill_scope"] = {
+                "skill_name": skill_name,
+                "tool_allowlist": sorted(policy.tool_allowlist_per_skill.get(skill_name, set())),
+                "resource_scope": sorted(policy.resource_scope_per_skill.get(skill_name, set())),
+            }
+
+        return build_success(
+            summary="Loaded access policy scope",
+            data=data,
+            source_layer="mcp.resources.security",
             trace_id=trace_id,
         )
 

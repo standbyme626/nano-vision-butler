@@ -94,6 +94,19 @@ class LastSeenQueryE2ETests(unittest.TestCase):
         self.assertIn("最后出现结果", text)
         self.assertIn("object_name: package", text)
 
+    def test_last_seen_text_query_routes_to_last_seen_plus_staleness(self) -> None:
+        response = self.client.post(
+            "/telegram/update",
+            json=self._build_update(update_id=6202, text="package最后一次在哪里出现？"),
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["status"], "processed")
+        text = payload["outbound_messages"][0]["text"]
+        self.assertIn("当前环境结构化结论", text)
+        self.assertIn("调用链: last_seen_object -> evaluate_staleness", text)
+        self.assertIn("证据时间:", text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

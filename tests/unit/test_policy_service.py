@@ -102,6 +102,7 @@ class PolicyServiceUnitTests(unittest.TestCase):
         self.assertTrue(decision["is_stale"])
         self.assertTrue(decision["fallback_required"])
         self.assertEqual(decision["reason_code"], "stale_requires_recheck")
+        self.assertEqual(decision["freshness_level"], "stale")
 
     def test_evaluate_staleness_for_object_historical_allows_stale_answer(self) -> None:
         self._save_stale_observation(object_name="package")
@@ -119,6 +120,10 @@ class PolicyServiceUnitTests(unittest.TestCase):
         self.assertTrue(decision["is_stale"])
         self.assertFalse(decision["fallback_required"])
         self.assertEqual(decision["reason_code"], "stale_but_historical_allowed")
+        self.assertEqual(decision["freshness_level"], "stale")
+        self.assertIn("reason_codes", decision)
+        self.assertEqual(decision["reason_codes"]["policy"], "stale_but_historical_allowed")
+        self.assertTrue(decision["state_reason_code"])
 
 
 if __name__ == "__main__":

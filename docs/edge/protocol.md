@@ -45,12 +45,15 @@
 
 `analysis_requests[]` 推荐字段（可选）：
 
-- `type`：`ocr_quick_read | ocr_extract_fields`
+- `type`：`ocr_quick_read | ocr_extract_fields | vision_q8_describe | scene_recheck | object_state_recheck | zone_state_recheck`
 - `priority`
 - `reason`
 - `input_uri`
 - `object_class`
 - `track_id`
+- `object_name`
+- `camera_id`
+- `zone_id`
 - `field_schema`（仅 `ocr_extract_fields` 可选）
 
 ## 3) Heartbeat (`POST /device/heartbeat`)

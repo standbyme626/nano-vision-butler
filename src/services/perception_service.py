@@ -18,7 +18,10 @@ from src.services.memory_service import MemoryService
 from src.settings import AppConfig
 
 if TYPE_CHECKING:
+    from src.services.notification_service import NotificationService
     from src.services.ocr_service import OCRService
+    from src.services.state_service import StateService
+    from src.services.vision_analysis_service import VisionAnalysisService
 
 
 class PerceptionService:
@@ -27,6 +30,10 @@ class PerceptionService:
     _ALLOWED_STATUSES = {"online", "offline", "degraded"}
     _EVENT_SCHEMA_VERSION = "edge.event.v1"
     _HEARTBEAT_SCHEMA_VERSION = "edge.heartbeat.v1"
+    _OCR_ANALYSIS_TYPES = {"ocr_quick_read", "ocr_extract_fields"}
+    _VISION_ANALYSIS_TYPES = {"vision_q8_describe"}
+    _STATE_ANALYSIS_TYPES = {"scene_recheck", "object_state_recheck", "zone_state_recheck"}
+    _SUPPORTED_ANALYSIS_TYPES = _OCR_ANALYSIS_TYPES | _VISION_ANALYSIS_TYPES | _STATE_ANALYSIS_TYPES
 
     def __init__(
         self,
@@ -37,6 +44,9 @@ class PerceptionService:
         config: AppConfig,
         security_guard: SecurityGuard,
         ocr_service: OCRService | None = None,
+        vision_analysis_service: VisionAnalysisService | None = None,
+        state_service: StateService | None = None,
+        notification_service: NotificationService | None = None,
     ) -> None:
         self._device_repo = device_repo
         self._audit_repo = audit_repo
@@ -44,6 +54,9 @@ class PerceptionService:
         self._config = config
         self._security_guard = security_guard
         self._ocr_service = ocr_service
+        self._vision_analysis_service = vision_analysis_service
+        self._state_service = state_service
+        self._notification_service = notification_service
         self._device_profiles = self._build_device_profiles()
 
     def ingest_event(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +123,10 @@ class PerceptionService:
                 promoted_event=promoted_event,
                 trace_id=trace_id,
             )
+            notification_report = self._trigger_notification_hook(
+                promoted_event=promoted_event,
+                trace_id=trace_id,
+            )
 
             return {
                 "accepted": True,
@@ -120,6 +137,7 @@ class PerceptionService:
                 "event_id": promoted_event.id if promoted_event else None,
                 "event_promoted": promoted_event is not None,
                 "analysis": analysis_report,
+                "notifications": notification_report,
                 "received_at": utc_now_iso8601(),
             }
         except ValueError as exc:
@@ -327,6 +345,31 @@ class PerceptionService:
         # Reserved integration hook for T6 state_service.
         _ = (observation, promoted_event)
 
+    def _trigger_notification_hook(
+        self,
+        *,
+        promoted_event: Event | None,
+        trace_id: str | None,
+    ) -> dict[str, Any] | None:
+        if promoted_event is None:
+            return None
+        if self._notification_service is None:
+            return {
+                "requested": 0,
+                "triggered": 0,
+                "skipped": 0,
+                "deliveries": [],
+                "skipped_reasons": [],
+                "status": "skipped",
+                "reason": "notification_service_unavailable",
+            }
+        result = self._notification_service.evaluate_event_notifications(
+            event=promoted_event,
+            trace_id=trace_id,
+        )
+        result["status"] = "ok"
+        return result
+
     def _trigger_backend_analysis(
         self,
         *,
@@ -352,51 +395,18 @@ class PerceptionService:
             report["status"] = "skipped"
             report["reason"] = "policy_disabled"
             return report
-        if self._ocr_service is None:
-            report["skipped"] = len(requests)
-            report["status"] = "skipped"
-            report["reason"] = "ocr_service_unavailable"
-            return report
 
-        default_input_uri = self._as_optional_text(payload.get("snapshot_uri"))
         for request in requests:
             req_type = request["type"]
-            input_uri = self._as_optional_text(request.get("input_uri")) or default_input_uri
-            if not input_uri:
-                report["skipped"] += 1
-                report["results"].append(
-                    {
-                        "type": req_type,
-                        "status": "skipped",
-                        "reason": "missing_input_uri",
-                    }
-                )
-                continue
-
-            ocr_payload: dict[str, Any] = {
-                "input_uri": input_uri,
-                "observation_id": observation.id,
-                "event_id": promoted_event.id if promoted_event else None,
-                "trace_id": trace_id,
-                "promote_to_event": False,
-            }
-            if req_type == "ocr_extract_fields" and isinstance(request.get("field_schema"), (dict, list)):
-                ocr_payload["field_schema"] = request["field_schema"]
-
             try:
-                if req_type == "ocr_extract_fields":
-                    result = self._ocr_service.extract_fields(ocr_payload)
-                else:
-                    result = self._ocr_service.quick_read(ocr_payload)
-                report["executed"] += 1
-                report["results"].append(
-                    {
-                        "type": req_type,
-                        "status": "ok",
-                        "ocr_result_id": self._as_optional_text(result.get("ocr_result_id")),
-                    }
+                result = self._dispatch_analysis_request(
+                    request=request,
+                    payload=payload,
+                    observation=observation,
+                    promoted_event=promoted_event,
+                    trace_id=trace_id,
                 )
-            except ValueError as exc:
+            except ValueError as exc:  # pragma: no cover - defensive branch for downstream services
                 report["failed"] += 1
                 report["results"].append(
                     {
@@ -405,6 +415,16 @@ class PerceptionService:
                         "reason": str(exc),
                     }
                 )
+                continue
+
+            status = self._as_optional_text(result.get("status")) or "skipped"
+            if status == "ok":
+                report["executed"] += 1
+            elif status == "failed":
+                report["failed"] += 1
+            else:
+                report["skipped"] += 1
+            report["results"].append(result)
 
         if report["failed"] > 0 and report["executed"] > 0:
             report["status"] = "partial"
@@ -426,6 +446,286 @@ class PerceptionService:
             meta=report,
         )
         return report
+
+    def _dispatch_analysis_request(
+        self,
+        *,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+        promoted_event: Event | None,
+        trace_id: str | None,
+    ) -> dict[str, Any]:
+        req_type = request["type"]
+        if req_type in self._OCR_ANALYSIS_TYPES:
+            return self._dispatch_ocr_request(
+                req_type=req_type,
+                request=request,
+                payload=payload,
+                observation=observation,
+                promoted_event=promoted_event,
+                trace_id=trace_id,
+            )
+        if req_type in self._VISION_ANALYSIS_TYPES:
+            return self._dispatch_vision_request(
+                req_type=req_type,
+                request=request,
+                payload=payload,
+                observation=observation,
+                promoted_event=promoted_event,
+                trace_id=trace_id,
+            )
+        if req_type == "scene_recheck":
+            return self._dispatch_scene_recheck(request=request, payload=payload, observation=observation)
+        if req_type == "object_state_recheck":
+            return self._dispatch_object_state_recheck(request=request, payload=payload, observation=observation)
+        if req_type == "zone_state_recheck":
+            return self._dispatch_zone_state_recheck(request=request, payload=payload, observation=observation)
+        return {
+            "type": req_type,
+            "status": "skipped",
+            "reason": "unsupported_analysis_type",
+        }
+
+    def _dispatch_ocr_request(
+        self,
+        *,
+        req_type: str,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+        promoted_event: Event | None,
+        trace_id: str | None,
+    ) -> dict[str, Any]:
+        if self._ocr_service is None:
+            return {
+                "type": req_type,
+                "status": "skipped",
+                "reason": "ocr_service_unavailable",
+            }
+
+        input_uri = self._as_optional_text(request.get("input_uri")) or self._as_optional_text(payload.get("snapshot_uri"))
+        if not input_uri:
+            return {
+                "type": req_type,
+                "status": "skipped",
+                "reason": "missing_input_uri",
+            }
+
+        ocr_payload: dict[str, Any] = {
+            "input_uri": input_uri,
+            "observation_id": observation.id,
+            "event_id": promoted_event.id if promoted_event else None,
+            "trace_id": trace_id,
+            "promote_to_event": False,
+        }
+        if req_type == "ocr_extract_fields" and isinstance(request.get("field_schema"), (dict, list)):
+            ocr_payload["field_schema"] = request["field_schema"]
+
+        if req_type == "ocr_extract_fields":
+            ocr_result = self._ocr_service.extract_fields(ocr_payload)
+        else:
+            ocr_result = self._ocr_service.quick_read(ocr_payload)
+        return {
+            "type": req_type,
+            "status": "ok",
+            "backend": "ocr_service",
+            "ocr_result_id": self._as_optional_text(ocr_result.get("ocr_result_id")),
+        }
+
+    def _dispatch_vision_request(
+        self,
+        *,
+        req_type: str,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+        promoted_event: Event | None,
+        trace_id: str | None,
+    ) -> dict[str, Any]:
+        if self._vision_analysis_service is None:
+            return {
+                "type": req_type,
+                "status": "skipped",
+                "reason": "vision_analysis_service_unavailable",
+            }
+
+        input_uri = self._as_optional_text(request.get("input_uri")) or self._as_optional_text(payload.get("snapshot_uri"))
+        if not input_uri:
+            return {
+                "type": req_type,
+                "status": "skipped",
+                "reason": "missing_input_uri",
+            }
+
+        vision_payload: dict[str, Any] = {
+            "input_uri": input_uri,
+            "observation_id": observation.id,
+            "event_id": promoted_event.id if promoted_event else None,
+            "trace_id": trace_id,
+            "object_name": (
+                self._as_optional_text(request.get("object_name"))
+                or self._as_optional_text(payload.get("object_name"))
+                or self._as_optional_text(observation.object_name)
+            ),
+            "object_class": (
+                self._as_optional_text(request.get("object_class"))
+                or self._as_optional_text(payload.get("object_class"))
+                or self._as_optional_text(observation.object_class)
+            ),
+            "camera_id": (
+                self._as_optional_text(request.get("camera_id"))
+                or self._as_optional_text(payload.get("camera_id"))
+                or self._as_optional_text(observation.camera_id)
+            ),
+            "zone_id": (
+                self._as_optional_text(request.get("zone_id"))
+                or self._as_optional_text(payload.get("zone_id"))
+                or self._as_optional_text(observation.zone_id)
+            ),
+            "track_id": (
+                self._as_optional_text(request.get("track_id"))
+                or self._as_optional_text(payload.get("track_id"))
+                or self._as_optional_text(observation.track_id)
+            ),
+            "importance": self._to_int(payload.get("importance")) or 3,
+        }
+        vision_result = self._vision_analysis_service.describe_scene(vision_payload)
+        return {
+            "type": req_type,
+            "status": "ok",
+            "backend": self._as_optional_text(vision_result.get("backend")) or "vision_analysis_service",
+            "vision_event_id": self._as_optional_text(vision_result.get("vision_event_id")),
+            "summary": self._as_optional_text(vision_result.get("summary")),
+            "model": self._as_optional_text(vision_result.get("model")),
+            "duration_ms": vision_result.get("duration_ms"),
+        }
+
+    def _dispatch_scene_recheck(
+        self,
+        *,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+    ) -> dict[str, Any]:
+        if self._state_service is None:
+            return {
+                "type": "scene_recheck",
+                "status": "skipped",
+                "reason": "state_service_unavailable",
+            }
+
+        object_result = self._dispatch_object_state_recheck(request=request, payload=payload, observation=observation)
+        zone_result = self._dispatch_zone_state_recheck(request=request, payload=payload, observation=observation)
+        if object_result["status"] != "ok" and zone_result["status"] != "ok":
+            return {
+                "type": "scene_recheck",
+                "status": "skipped",
+                "reason": "missing_scene_context",
+                "object_reason": object_result.get("reason"),
+                "zone_reason": zone_result.get("reason"),
+            }
+        return {
+            "type": "scene_recheck",
+            "status": "ok",
+            "backend": "state_service",
+            "object_recheck": object_result,
+            "zone_recheck": zone_result,
+        }
+
+    def _dispatch_object_state_recheck(
+        self,
+        *,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+    ) -> dict[str, Any]:
+        if self._state_service is None:
+            return {
+                "type": "object_state_recheck",
+                "status": "skipped",
+                "reason": "state_service_unavailable",
+            }
+
+        object_name = (
+            self._as_optional_text(request.get("object_name"))
+            or self._as_optional_text(payload.get("object_name"))
+            or self._as_optional_text(observation.object_name)
+        )
+        if not object_name:
+            return {
+                "type": "object_state_recheck",
+                "status": "skipped",
+                "reason": "missing_object_name",
+            }
+
+        camera_id = (
+            self._as_optional_text(request.get("camera_id"))
+            or self._as_optional_text(payload.get("camera_id"))
+            or self._as_optional_text(observation.camera_id)
+        )
+        zone_id = (
+            self._as_optional_text(request.get("zone_id"))
+            or self._as_optional_text(payload.get("zone_id"))
+            or self._as_optional_text(observation.zone_id)
+        )
+        object_state, reason_code = self._state_service.refresh_object_state(
+            object_name=object_name,
+            camera_id=camera_id,
+            zone_id=zone_id,
+        )
+        return {
+            "type": "object_state_recheck",
+            "status": "ok",
+            "backend": "state_service",
+            "state_id": object_state.id,
+            "state_value": object_state.state_value,
+            "reason_code": reason_code,
+        }
+
+    def _dispatch_zone_state_recheck(
+        self,
+        *,
+        request: dict[str, Any],
+        payload: dict[str, Any],
+        observation: Observation,
+    ) -> dict[str, Any]:
+        if self._state_service is None:
+            return {
+                "type": "zone_state_recheck",
+                "status": "skipped",
+                "reason": "state_service_unavailable",
+            }
+
+        camera_id = (
+            self._as_optional_text(request.get("camera_id"))
+            or self._as_optional_text(payload.get("camera_id"))
+            or self._as_optional_text(observation.camera_id)
+        )
+        zone_id = (
+            self._as_optional_text(request.get("zone_id"))
+            or self._as_optional_text(payload.get("zone_id"))
+            or self._as_optional_text(observation.zone_id)
+        )
+        if not camera_id or not zone_id:
+            return {
+                "type": "zone_state_recheck",
+                "status": "skipped",
+                "reason": "missing_zone_context",
+            }
+
+        zone_state, reason_code = self._state_service.refresh_zone_state(
+            camera_id=camera_id,
+            zone_id=zone_id,
+        )
+        return {
+            "type": "zone_state_recheck",
+            "status": "ok",
+            "backend": "state_service",
+            "state_id": zone_state.id,
+            "state_value": zone_state.state_value,
+            "reason_code": reason_code,
+        }
 
     def _write_audit(
         self,
@@ -579,7 +879,7 @@ class PerceptionService:
             if not isinstance(item, dict):
                 continue
             req_type = self._as_optional_text(item.get("type"))
-            if req_type not in {"ocr_quick_read", "ocr_extract_fields"}:
+            if req_type not in self._SUPPORTED_ANALYSIS_TYPES:
                 continue
             normalized: dict[str, Any] = {
                 "type": req_type,
@@ -588,6 +888,9 @@ class PerceptionService:
                 "input_uri": self._as_optional_text(item.get("input_uri")),
                 "object_class": self._as_optional_text(item.get("object_class")),
                 "track_id": self._as_optional_text(item.get("track_id")),
+                "object_name": self._as_optional_text(item.get("object_name")),
+                "camera_id": self._as_optional_text(item.get("camera_id")),
+                "zone_id": self._as_optional_text(item.get("zone_id")),
             }
             field_schema = item.get("field_schema")
             if isinstance(field_schema, (dict, list)):
